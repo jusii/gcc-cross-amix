@@ -150,14 +150,37 @@ The wrapper also handles the cases a real build runs into:
   sysroot ships `libc.so.1` rather than `libc.so`, so `-lc` could not find it,
   and its `DT_SONAME` is what gets recorded anyway.
 - `-c` with no `-o` writes the object into the **current working directory**
-  under the source's basename: `m68k-cbm-sysv4-gcc -c ../src/foo.c` produces
-  `./foo.o`. It used to keep the directory part and write `../src/foo.o`, next
-  to the source, which broke every build with a separate object directory --
-  gcc's own build, imake/X11, and any autoconf package configured from a
-  separate build tree. The compile still reported success, so the failure
-  surfaced at the link as `ld: cannot open foo.o: No such file or directory`,
-  and stray objects were left behind in the source tree. An explicit `-o` is
-  honoured verbatim, as before, including a path into another directory.
+  under the input's basename: `m68k-cbm-sysv4-gcc -c ../src/foo.c` produces
+  `./foo.o`, and so does `-c ../src/foo.s`. An explicit `-o` is honoured
+  verbatim, including a path into another directory.
+
+  This is a change in behaviour for **any compile whose source is not in the
+  directory `make` was run from** -- the discriminator is the working directory
+  versus the source's own directory, not whether the build uses a separate
+  object directory. A non-recursive top-level `Makefile` compiling `sub/foo.c`
+  is affected exactly as a VPATH build is; only a compile whose source is in
+  the working directory is unchanged, because there the two locations coincide.
+  (The commit that landed the C half, `8ca9e3b`, stated the narrower "in-tree
+  builds are unaffected"; that is wrong, and this is the correct scope.)
+
+  For `.c` sources the wrapper used to keep the directory part and write
+  `../src/foo.o`, next to the source. That broke every build compiling from
+  elsewhere -- gcc's own build, imake/X11, any autoconf package configured from
+  a separate build tree, and any Makefile naming its sources `sub/foo.c`. The
+  compile still reported success, so the failure surfaced at the link as
+  `ld: cannot open foo.o: No such file or directory`, with stray objects left
+  behind in the source tree.
+
+  For `.s`/`.S` inputs the same missing `-o` was worse, because those are
+  passed to the real compiler rather than assembled by the wrapper: it forwarded
+  an *empty* `-o`, which `gcc 2.7.2.3` drops from the command line it builds, so
+  the assembler ran as `as -V -Qy -o ../src/foo.s` -- the file that should have
+  been the input became the output. In a non-interactive build `as` then read an
+  empty stdin, produced no `.o` anywhere and exited 0; on a terminal the compile
+  hung. For a `.s` input the clobbered file is the assembly source itself, so
+  the build **replaced its own source with an object**; for `.S` it is gcc's
+  preprocessed temporary, so only the object is lost. A plain `.s.o:` suffix
+  rule triggered this on every file it touched.
 
 ### Using autoconf
 
@@ -235,8 +258,9 @@ make test-bitfield   bit-field offset and width survive as extension-word
 make test-uint64     64-bit / % and >> link, with __udivdi3 __umoddi3
                      __lshrdi3 resolved from the installed libgcc.a
 make test-objdir     -c with no -o writes ./basename.o into the working
-                     directory and leaves the source directory clean, while
-                     an explicit -o is still honoured verbatim
+                     directory and leaves the source directory clean, for
+                     .c, .s and .S alike, while an explicit -o is still
+                     honoured verbatim
 make test-dtneeded   a program linked against -lsocket -lnsl records bare
                      library names, no build-host path, and still depends
                      on /usr/lib/libc.so.1
