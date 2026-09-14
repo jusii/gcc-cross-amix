@@ -91,7 +91,7 @@ LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 	_floatdidf _floatdisf _floatdixf _fixunsdfdi _fixdfdi _fixunssfdi \
 	__gcc_bcmp _clear_cache _shtab _trampoline
 
-.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check gcc install-gcc gcc-full install-gcc-wrapper install-target-ar libgcc install-libgcc env test-random test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield print-vars clean distclean
+.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check gcc install-gcc gcc-full install-gcc-wrapper install-target-ar libgcc install-libgcc env test-random test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir print-vars clean distclean
 
 all: install-binutils sysroot install-gcc install-gcc-wrapper install-target-ar install-libgcc env
 
@@ -119,6 +119,7 @@ help:
 	@echo "  make test-fcmp       Compare order: the fcmp destination is the register the fmul wrote"
 	@echo "  make test-bitfield   Bit-field offset/width survive as extension-word bits 10:6 and 4:0"
 	@echo "  make test-uint64     64-bit / % >> link, helpers resolved from libgcc.a"
+	@echo "  make test-objdir     '-c' with no '-o' writes ./basename.o, not beside the source"
 	@echo ""
 	@echo "Useful overrides:"
 	@echo "  make PREFIX=/opt/amix-cross"
@@ -763,6 +764,61 @@ test-bitfield: install-gcc-wrapper env
 			}' || status=1; \
 	done; \
 	test $$status -eq 0 && echo "test-bitfield PASS: all eight bit-field mnemonics assemble, offset/width encodings intact"
+
+# Regression test for object placement with "-c" and no "-o" (see the compile
+# loop in amix-gcc-wrapper.sh).  A C compiler writes the object into the CURRENT
+# WORKING DIRECTORY under the source's basename: "cc -c ../src/foo.c" produces
+# "./foo.o".  The wrapper used to strip only the suffix and keep the directory
+# part, so it wrote "../src/foo.o" -- next to the SOURCE.
+#
+# That breaks every build with a separate object directory, which is the normal
+# shape of a VPATH/srcdir build: gcc's own build compiles "../gcc-src/*.c" into
+# the build directory, and imake/X11 and autoconf packages configured from a
+# separate build tree do the same.  The compile reports success, so the failure
+# surfaces later and somewhere else -- "ld: cannot open c-parse.o: No such file
+# or directory" -- and meanwhile the stray objects are left in the source tree
+# where another build can pick them up.
+#
+# The two halves checked here:
+#   (a) no -o: the object lands in the cwd as ./objdir_src.o and NOT beside the
+#       source; and
+#   (b) an explicit -o is still honoured verbatim, including a path that points
+#       into another directory (the wrapper must not "helpfully" relocate it).
+# Both are checked by looking for the FILE, not by trusting the exit status --
+# the pre-fix wrapper exits 0 in case (a) too.
+#
+# Failure mode against the PRE-FIX wrapper (proof this test bites): check (a)
+# fails on both counts -- $(BUILDDIR)/test/objdir/objdir_src.o is missing and
+# $(BUILDDIR)/test/objdir-src/objdir_src.o exists.
+test-objdir: install-gcc-wrapper env
+	rm -rf $(BUILDDIR)/test/objdir $(BUILDDIR)/test/objdir-src
+	mkdir -p $(BUILDDIR)/test/objdir $(BUILDDIR)/test/objdir-src
+	printf '%s\n' \
+		'/* Compiled from a DIFFERENT directory than the one it lives in. */' \
+		'int objdir_probe(int n) { return n + 1; }' \
+		> $(BUILDDIR)/test/objdir-src/objdir_src.c
+	@set -e; status=0; \
+	cd $(BUILDDIR)/test/objdir && \
+		$(TARGET_CC) $(CPUFLAGS) -O -c ../objdir-src/objdir_src.c; \
+	if test -f $(BUILDDIR)/test/objdir/objdir_src.o; then \
+		echo "  ok   -c without -o wrote ./objdir_src.o into the working directory"; \
+	else \
+		echo "  FAIL -c without -o did not write ./objdir_src.o into the working directory"; status=1; \
+	fi; \
+	if test -e $(BUILDDIR)/test/objdir-src/objdir_src.o; then \
+		echo "  FAIL -c without -o wrote the object next to the source (../objdir-src/objdir_src.o)"; status=1; \
+	else \
+		echo "  ok   the source directory was left clean"; \
+	fi; \
+	rm -f $(BUILDDIR)/test/objdir/objdir_src.o; \
+	cd $(BUILDDIR)/test/objdir && \
+		$(TARGET_CC) $(CPUFLAGS) -O -c ../objdir-src/objdir_src.c -o ../objdir-src/explicit.o; \
+	if test -f $(BUILDDIR)/test/objdir-src/explicit.o; then \
+		echo "  ok   explicit -o still honoured verbatim, including a path elsewhere"; \
+	else \
+		echo "  FAIL explicit -o was not honoured"; status=1; \
+	fi; \
+	test $$status -eq 0 && echo "test-objdir PASS: -c writes ./basename.o, -o unchanged"
 
 clean:
 	rm -rf $(BUILDDIR)

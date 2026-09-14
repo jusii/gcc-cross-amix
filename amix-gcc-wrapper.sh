@@ -380,9 +380,28 @@ if test "$has_c" = yes; then
 		echo "amix gcc wrapper: -o with -c and multiple sources is not supported" >&2
 		exit 1
 	fi
+	# fix (compiling): with -c and no -o, the object belongs in the CURRENT
+	# WORKING DIRECTORY under the source's basename -- "cc -c ../src/foo.c"
+	# writes "./foo.o".  This used to strip only the suffix and keep the
+	# directory part, so the object was written NEXT TO THE SOURCE, in
+	# ../src/foo.o.  Every build with a separate object directory then failed
+	# at the link: the compile reported success, the object was nowhere make
+	# expected it, and ld stopped with "cannot open foo.o: No such file or
+	# directory".  That is the normal shape of a VPATH/srcdir build -- gcc's
+	# own build (which compiles ../gcc-src/*.c into the build directory),
+	# imake/X11, and any autoconf package configured from a separate build
+	# tree -- so it was not an exotic case.  Worse, the stray objects landed
+	# in the source tree, where a second build could pick them up.
+	#
+	# With an explicit -o nothing changes: $compile_out is used verbatim,
+	# including a path into another directory.  ("make test-objdir" gates
+	# both halves.)
 	for src in "${sources[@]}"; do
 		obj="$compile_out"
-		test -n "$obj" || obj="${src%.*}.o"
+		test -n "$obj" || {
+			obj="$(basename "$src")"
+			obj="${obj%.*}.o"
+		}
 		compile_one "$src" "$obj" "${compile_flags[@]}"
 	done
 	exit 0

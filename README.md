@@ -137,6 +137,15 @@ The wrapper also handles the cases a real build runs into:
 - The installed `libgcc.a` is appended to every link, so the soft-arithmetic
   helpers (`__udivdi3`, `__umoddi3`, `__lshrdi3`, the DImode/float conversions)
   resolve without an explicit `-lgcc`.
+- `-c` with no `-o` writes the object into the **current working directory**
+  under the source's basename: `m68k-cbm-sysv4-gcc -c ../src/foo.c` produces
+  `./foo.o`. It used to keep the directory part and write `../src/foo.o`, next
+  to the source, which broke every build with a separate object directory --
+  gcc's own build, imake/X11, and any autoconf package configured from a
+  separate build tree. The compile still reported success, so the failure
+  surfaced at the link as `ld: cannot open foo.o: No such file or directory`,
+  and stray objects were left behind in the source tree. An explicit `-o` is
+  honoured verbatim, as before, including a path into another directory.
 
 ### Using autoconf
 
@@ -213,11 +222,15 @@ make test-bitfield   bit-field offset and width survive as extension-word
                      bits 10:6 and 4:0, register-select bits clear (rule 4)
 make test-uint64     64-bit / % and >> link, with __udivdi3 __umoddi3
                      __lshrdi3 resolved from the installed libgcc.a
+make test-objdir     -c with no -o writes ./basename.o into the working
+                     directory and leaves the source directory clean, while
+                     an explicit -o is still honoured verbatim
 ```
 
 The first four compile with `-c` at both `-O0` and `-O` and inspect the object
-with `objdump`, so they need only the installed wrapper. `test-uint64` links, so
-like `test-hello` it needs the AMIX crt objects and `libc.so.1` in the sysroot.
+with `objdump`, so they need only the installed wrapper; `test-objdir` likewise
+needs nothing but the wrapper. `test-uint64` links, so like `test-hello` it
+needs the AMIX crt objects and `libc.so.1` in the sysroot.
 
 ## Important Variables
 
