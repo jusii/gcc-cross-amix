@@ -410,13 +410,55 @@ done
 
 if test "$has_c" = yes; then
 	if test "${#sources[@]}" -eq 0; then
-		for input in "${objects[@]}"; do
-			if test -n "$input" && test "$compile_out" = "$input"; then
-				echo "amix gcc wrapper: refusing to overwrite input file '$input'" >&2
-				exit 1
-			fi
-		done
-		exec "$real" "${common_cflags[@]}" -c "${compile_flags[@]}" -o "$compile_out" "${objects[@]}"
+		# -c with no *.c source.  Everything the parse loop filed as an
+		# "object" -- .s, .S, .i, or any other input the wrapper does not
+		# compile itself -- is handed to the real driver, which knows how
+		# to assemble or compile each of them.
+		#
+		# fix (compiling): pass -o only when one was actually given.  This
+		# used to pass "-o $compile_out" unconditionally, so a plain
+		# "cc -c foo.s" reached the real compiler as "-c -o '' foo.s".
+		# gcc 2.7.2.3 splices its spec strings argument by argument and an
+		# EMPTY argument disappears from the command line it builds, so
+		# the assembler was run as
+		#
+		#     as -V -Qy -o ../src/probe.s
+		#
+		# -- the source had become the -o ARGUMENT and as read its input
+		# from stdin.  The consequences are worse than a missing object:
+		# with stdin at EOF (any non-interactive build) as wrote an empty
+		# module OVER THE ASSEMBLY SOURCE and exited 0, so the .s file was
+		# replaced by an ELF object, nothing appeared in the working
+		# directory, and nothing was printed; on a terminal the compile
+		# simply hung waiting for input that never came.  The ordinary
+		# SVR4-era way to build assembly,
+		#
+		#     .s.o:
+		#             $(CC) $(CFLAGS) -c $<
+		#
+		# hits this on every .s file it touches.  (For a .S input the file
+		# the assembler clobbers is gcc's own preprocessed temporary, not
+		# the source, so that case merely loses the object.)
+		#
+		# With -o left off, the real driver applies its own -c rule, which
+		# is the same rule the *.c path below implements by hand: one
+		# object per input, in the CURRENT WORKING DIRECTORY, named after
+		# the input's basename -- "cc -c ../src/foo.s" writes "./foo.o"
+		# and leaves ../src alone.  That covers .s, .S and .i alike, and
+		# multiple inputs in one command, without this branch having to
+		# reimplement the naming.  An explicit -o is still passed through
+		# verbatim.  ("make test-objdir" gates .c, .s and .S.)
+		compile_out_args=()
+		if test -n "$compile_out"; then
+			for input in "${objects[@]}"; do
+				if test -n "$input" && test "$compile_out" = "$input"; then
+					echo "amix gcc wrapper: refusing to overwrite input file '$input'" >&2
+					exit 1
+				fi
+			done
+			compile_out_args=(-o "$compile_out")
+		fi
+		exec "$real" "${common_cflags[@]}" -c "${compile_flags[@]}" "${compile_out_args[@]}" "${objects[@]}"
 	fi
 	if test "${#sources[@]}" -gt 1 && test -n "$compile_out"; then
 		echo "amix gcc wrapper: -o with -c and multiple sources is not supported" >&2
