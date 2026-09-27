@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-27 — AMIX_KERNEL_CFLAGS keeps volatile and const under -traditional (7a1d727)
+
+`-Dvolatile=__volatile__ -Dconst=__const__` added next to `-Dinline=__inline__`. Under `-traditional` the
+stock `<sys/types.h>` defined `volatile` and `const` as empty, so gcc deleted `spl6()`/`splx()` from
+`<sys/inline.h>` (their asm lost its volatile) and stopped treating MMIO accesses as volatile (review T-9).
+New gate `make test-kernel-volatile`; README section "Kernel CFLAGS: -traditional and volatile". Every
+kernel object built with the old flags was rebuilt (kerntools 5adc175).
+
 ## 2026-09-15
 
 - wrapper: "-c" with no "-o" no longer forwards an EMPTY "-o" to the real compiler
