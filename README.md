@@ -264,6 +264,9 @@ make test-objdir     -c with no -o writes ./basename.o into the working
 make test-dtneeded   a program linked against -lsocket -lnsl records bare
                      library names, no build-host path, and still depends
                      on /usr/lib/libc.so.1
+make test-kernel-volatile
+                     under AMIX_KERNEL_CFLAGS, spl6()/splx() still write
+                     %sr and a volatile register poll re-reads memory
 ```
 
 The first four compile with `-c` at both `-O0` and `-O` and inspect the object
@@ -271,6 +274,7 @@ with `objdump`, so they need only the installed wrapper; `test-objdir` likewise
 needs nothing but the wrapper. `test-uint64` and `test-dtneeded` link, so like
 `test-hello` they need the AMIX crt objects and `libc.so.1` in the sysroot;
 `test-dtneeded` additionally needs `libsocket.so` and `libnsl.so` there.
+`test-kernel-volatile` needs the AMIX headers (`AMIX_ROOT`), see below.
 
 ## Important Variables
 
@@ -367,6 +371,19 @@ Example:
 ```sh
 make AMIX_ROOT=$HOME/src/usr-amix CPUFLAGS=-m68030 test-random
 ```
+
+### Kernel CFLAGS: -traditional and volatile
+
+`AMIX_KERNEL_CFLAGS` compiles with `-traditional`, which clears `__STDC__`, and
+the stock `<sys/types.h>` then does `#define volatile` and `#define const`
+(empty); that silently strips the `volatile` from the `asm volatile` spl
+primitives in `<sys/inline.h>`, so gcc deletes `splx()` and any `spl6()` whose
+result only feeds it, and every MMIO `volatile` access is erased too (a 32-bit
+register poll read once, as a byte, then spinning on a register). The flags
+therefore carry `-Dvolatile=__volatile__ -Dconst=__const__` beside
+`-Dinline=__inline__`, which the header's `#ifndef` guards respect; this was
+found in audit T-9 (2026-09-27) and `make test-kernel-volatile` gates it.
+Objects built with the old flags should be rebuilt.
 
 ## AMIX Makefiles
 
