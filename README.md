@@ -267,6 +267,9 @@ make test-dtneeded   a program linked against -lsocket -lnsl records bare
 make test-kernel-volatile
                      under AMIX_KERNEL_CFLAGS, spl6()/splx() still write
                      %sr and a volatile register poll re-reads memory
+make test-user-volatile
+                     under AMIX_USER_CFLAGS, a volatile register poll
+                     re-reads memory and a const table is read-only data
 ```
 
 The first four compile with `-c` at both `-O0` and `-O` and inspect the object
@@ -274,7 +277,8 @@ with `objdump`, so they need only the installed wrapper; `test-objdir` likewise
 needs nothing but the wrapper. `test-uint64` and `test-dtneeded` link, so like
 `test-hello` they need the AMIX crt objects and `libc.so.1` in the sysroot;
 `test-dtneeded` additionally needs `libsocket.so` and `libnsl.so` there.
-`test-kernel-volatile` needs the AMIX headers (`AMIX_ROOT`), see below.
+`test-kernel-volatile` needs the AMIX headers (`AMIX_ROOT`), and
+`test-user-volatile` needs them in the sysroot (`SYSROOT`); see below.
 
 The gates test an installed toolchain, so run `make all` first. They reinstall
 only the wrapper script (`make refresh-gcc-wrapper`), so an edit to
@@ -319,7 +323,8 @@ standalone clone that path means nothing.
 `AMIX_SYSROOT` overrides the prefix-relative default `$PREFIX/$TARGET/sysroot`,
 and `AMIX_CRT_DIR` overrides `$AMIX_SYSROOT/usr/ccs/lib`. Set them if you keep
 the sysroot outside the install prefix. `make env` writes both into
-`build/env.sh`, together with `PATH`, `AMIX_ROOT` and `AMIX_KERNEL_CFLAGS`;
+`build/env.sh`, together with `PATH`, `AMIX_ROOT`, `AMIX_KERNEL_CFLAGS` and
+`AMIX_USER_CFLAGS`;
 `build/env.sh` is generated, machine-specific and git-ignored, so source it
 rather than edit it.
 
@@ -391,6 +396,21 @@ therefore carry `-Dvolatile=__volatile__ -Dconst=__const__` beside
 `-Dinline=__inline__`, which the header's `#ifndef` guards respect; this was
 found in audit T-9 (2026-09-27) and `make test-kernel-volatile` gates it.
 Objects built with the old flags should be rebuilt.
+
+### User CFLAGS: the same trap
+
+`AMIX_USER_CFLAGS`, the suggested flags for user programs built the way the
+native AMIX compiler builds them, also use `-traditional`, so any unit that
+includes `<sys/types.h>` (directly or through most system headers) lost
+`volatile` and `const` the same way: a poll through a `volatile` pointer was
+read once and the loop spun on a register, and `const` tables were placed in
+writable `.data`. They now carry the same
+`-Dvolatile=__volatile__ -Dconst=__const__`, `make env` exports them into
+`build/env.sh`, and `make test-user-volatile` gates them. Code that relies on
+`volatile` (signal flags, shared memory, device registers) and was built with
+the old flags should be rebuilt; with the fix `const` data moves to `.rodata` in the
+read-only text segment, so a program that writes through a cast-away `const`
+now faults instead of silently succeeding.
 
 ## AMIX Makefiles
 

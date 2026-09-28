@@ -53,7 +53,7 @@ SYSROOT ?= $(PREFIX)/$(TARGET)/sysroot
 AMIX_USR_LIB ?= $(AMIX_ROOT)/usr/lib
 AMIX_CRT_DIR ?= $(SYSROOT)/usr/ccs/lib
 AMIX_CRTS ?= crt1.o crti.o crtn.o
-AMIX_USER_CFLAGS ?= -O -traditional -fno-builtin $(CPUFLAGS) -I$(SYSROOT)/usr/include
+AMIX_USER_CFLAGS ?= -O -traditional -fno-builtin -Dvolatile=__volatile__ -Dconst=__const__ $(CPUFLAGS) -I$(SYSROOT)/usr/include
 
 PATH_FOR_BUILD := $(PREFIX)/bin:$(PATH)
 TARGET_CC := $(PREFIX)/bin/$(TARGET)-gcc
@@ -91,7 +91,7 @@ LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 	_floatdidf _floatdisf _floatdixf _fixunsdfdi _fixdfdi _fixunssfdi \
 	__gcc_bcmp _clear_cache _shtab _trampoline
 
-.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check gcc install-gcc gcc-full install-gcc-wrapper refresh-gcc-wrapper install-target-ar libgcc install-libgcc env test-random test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir test-dtneeded test-kernel-volatile print-vars clean distclean
+.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check gcc install-gcc gcc-full install-gcc-wrapper refresh-gcc-wrapper install-target-ar libgcc install-libgcc env test-random test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir test-dtneeded test-kernel-volatile test-user-volatile print-vars clean distclean
 
 all: install-binutils sysroot install-gcc install-gcc-wrapper install-target-ar install-libgcc env
 
@@ -123,6 +123,7 @@ help:
 	@echo "  make test-objdir     '-c' with no '-o' writes ./basename.o, not beside the source"
 	@echo "  make test-dtneeded   DT_NEEDED names resolve on the guest, not on the build host"
 	@echo "  make test-kernel-volatile  spl()/splx() and MMIO volatile survive AMIX_KERNEL_CFLAGS"
+	@echo "  make test-user-volatile    volatile polls and const data survive AMIX_USER_CFLAGS"
 	@echo ""
 	@echo "Useful overrides:"
 	@echo "  make PREFIX=/opt/amix-cross"
@@ -145,6 +146,7 @@ print-vars:
 	@echo "GCC_VERSION=$(GCC_VERSION)"
 	@echo "AMIX_ROOT=$(AMIX_ROOT)"
 	@echo "AMIX_KERNEL_CFLAGS=$(AMIX_KERNEL_CFLAGS)"
+	@echo "AMIX_USER_CFLAGS=$(AMIX_USER_CFLAGS)"
 	@echo "SYSROOT=$(SYSROOT)"
 	@echo "AMIX_CRT_DIR=$(AMIX_CRT_DIR)"
 
@@ -452,6 +454,7 @@ env:
 	@printf '%s\n' 'export AMIX_SYSROOT="$(SYSROOT)"' >> $(BUILDDIR)/env.sh
 	@printf '%s\n' 'export AMIX_CRT_DIR="$(AMIX_CRT_DIR)"' >> $(BUILDDIR)/env.sh
 	@printf '%s\n' 'export AMIX_KERNEL_CFLAGS="$(AMIX_KERNEL_CFLAGS)"' >> $(BUILDDIR)/env.sh
+	@printf '%s\n' 'export AMIX_USER_CFLAGS="$(AMIX_USER_CFLAGS)"' >> $(BUILDDIR)/env.sh
 	@echo "Wrote $(BUILDDIR)/env.sh"
 
 test-random: refresh-gcc-wrapper env
@@ -1043,6 +1046,77 @@ test-kernel-volatile: refresh-gcc-wrapper
 		echo "  ok   pollbusy(): no byte access to the 32-bit register"; \
 	fi; \
 	test $$status -eq 0 && echo "test-kernel-volatile PASS: spl masks and MMIO volatile survive AMIX_KERNEL_CFLAGS"
+
+# Regression test for AMIX_USER_CFLAGS: the same <sys/types.h> trap as above,
+# for user programs.  -traditional clears __STDC__, so every user unit that
+# includes <sys/types.h> (directly or through most system headers) had
+# "volatile" and "const" defined away: a poll through a volatile pointer is
+# read once, as a byte, and the loop spins on a register, and const tables land
+# in writable .data.  The flags carry -Dvolatile=__volatile__
+# -Dconst=__const__, as AMIX_KERNEL_CFLAGS does.
+#
+# Checks, on a user unit compiled with the exact AMIX_USER_CFLAGS:
+#   (a) the preprocessor output has no empty "#define volatile"/"const";
+#   (b) pollreg()'s loop re-reads *reg with a 32-bit memory access inside the
+#       loop, and never tests it with a byte-sized btst;
+#   (c) the const table is read-only data (nm type r), not .data.
+#
+# Failure mode without the two -D flags (proof this test bites): (a) finds both
+# empty defines, pollreg() tests "%a0@(3)" once with btst and then loops on
+# "tstl %d0", and the table is nm type d.  Reproduce with
+#   make test-user-volatile AMIX_USER_CFLAGS='-O -traditional -fno-builtin \
+#     $(CPUFLAGS) -I$(SYSROOT)/usr/include'
+test-user-volatile: refresh-gcc-wrapper
+	mkdir -p $(BUILDDIR)/test
+	@test -f $(SYSROOT)/usr/include/sys/types.h || \
+		{ echo "test-user-volatile: no usr/include/sys/types.h under SYSROOT=$(SYSROOT)"; exit 1; }
+	printf '%s\n' \
+		'#include <sys/types.h>' \
+		'static const int table[4] = { 1, 2, 3, 4 };' \
+		'int lookup(int i) { return table[i & 3]; }' \
+		'void pollreg(volatile ulong_t *reg) { while (*reg & 1) ; }' \
+		> $(BUILDDIR)/test/uvolatile.c
+	AMIX_SYSROOT="$(SYSROOT)" $(TARGET_CC) -c $(AMIX_USER_CFLAGS) -o $(BUILDDIR)/test/uvolatile.o $(BUILDDIR)/test/uvolatile.c
+	@set -e; status=0; \
+	defs="$$(AMIX_SYSROOT="$(SYSROOT)" $(TARGET_CC) $(AMIX_USER_CFLAGS) -dM -E $(BUILDDIR)/test/uvolatile.c)"; \
+	echo "==== -dM -E: volatile/const ===="; \
+	printf '%s\n' "$$defs" | grep -E '^#define[[:space:]]+(volatile|const)([[:space:]]|$$)' || true; \
+	if printf '%s\n' "$$defs" | grep -Eq '^#define[[:space:]]+(volatile|const)[[:space:]]*$$'; then \
+		echo "  FAIL <sys/types.h> defines volatile/const away (empty #define)"; status=1; \
+	else \
+		echo "  ok   no empty #define volatile/const"; \
+	fi; \
+	dis="$$($(PREFIX)/bin/$(TARGET)-objdump -d $(BUILDDIR)/test/uvolatile.o)"; \
+	poll="$$(printf '%s\n' "$$dis" | sed -n '/<pollreg>:$$/,/^$$/p')"; \
+	echo "==== pollreg ===="; printf '%s\n' "$$poll"; \
+	body="$$(printf '%s\n' "$$poll" | perl -ne ' \
+		next unless /^\s*([0-9a-f]+):\t[0-9a-f ]+\t(.*)$$/; \
+		push @l, [hex $$1, $$2]; \
+		END { for my $$i (0..$$#l) { \
+			my ($$a, $$t) = @{$$l[$$i]}; \
+			next unless $$t =~ /^(b[a-z]+|db[a-z]+)\b.*?([0-9a-f]+) </; \
+			my $$to = hex $$2; next unless $$to <= $$a; \
+			print map { "$$_->[1]\n" } grep { $$_->[0] >= $$to && $$_->[0] <= $$a } @l; last; } }')"; \
+	if [ -z "$$body" ]; then \
+		echo "  FAIL pollreg(): no backward branch, no poll loop found"; status=1; \
+	elif printf '%s\n' "$$body" | grep -Eq '^(movel|andl|tstl|cmpl)[[:space:]].*%a[0-7]@'; then \
+		echo "  ok   pollreg(): the loop re-reads the register (32-bit memory access)"; \
+	else \
+		echo "  FAIL pollreg(): the loop body has no memory read (read hoisted):"; \
+		printf '%s\n' "$$body" | sed 's/^/         /'; status=1; \
+	fi; \
+	if printf '%s\n' "$$poll" | grep -Eq 'btst[[:space:]].*%a[0-7]@'; then \
+		echo "  FAIL pollreg(): a byte-sized btst on the 32-bit register"; status=1; \
+	else \
+		echo "  ok   pollreg(): no byte access to the 32-bit register"; \
+	fi; \
+	tbl="$$($(PREFIX)/bin/$(TARGET)-nm $(BUILDDIR)/test/uvolatile.o | awk '$$3 == "table" { print $$2 }')"; \
+	if [ "$$tbl" = r ]; then \
+		echo "  ok   const table is read-only data (nm type r)"; \
+	else \
+		echo "  FAIL const table has nm type '$$tbl', want r (const dropped)"; status=1; \
+	fi; \
+	test $$status -eq 0 && echo "test-user-volatile PASS: volatile polls and const data survive AMIX_USER_CFLAGS"
 
 clean:
 	rm -rf $(BUILDDIR)
