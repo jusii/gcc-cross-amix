@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-28 — AMIX_USER_CFLAGS keeps volatile and const; test gates reinstall only the wrapper
+
+The same -Dvolatile=__volatile__ -Dconst=__const__ pair as AMIX_KERNEL_CFLAGS, for user-space builds under -traditional. The test targets no longer reinstall binutils and gcc into the prefix.
+
 ## 2026-09-27 — AMIX_KERNEL_CFLAGS keeps volatile and const under -traditional (7a1d727)
 
 `-Dvolatile=__volatile__ -Dconst=__const__` added next to `-Dinline=__inline__`. Under `-traditional` the
