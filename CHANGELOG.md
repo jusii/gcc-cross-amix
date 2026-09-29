@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-29 — the wrapper keeps gcc -d<X> flags off ld; the sysroot is guarded
+
+A link with `-dM` could make ld take the next argument, the sysroot libc.so.1, as a map file and overwrite it (it did, 2026-09-28). `make sysroot` leaves the stock files read-only; a `sysroot-check` target and env.sh refuse a non-ELF libc.
+
 ## 2026-09-28 — AMIX_USER_CFLAGS keeps volatile and const; test gates reinstall only the wrapper
 
 The same -Dvolatile=__volatile__ -Dconst=__const__ pair as AMIX_KERNEL_CFLAGS, for user-space builds under -traditional. The test targets no longer reinstall binutils and gcc into the prefix.
