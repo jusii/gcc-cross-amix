@@ -15,7 +15,7 @@ GNU ld: works
 Target libgcc.a, ar and ranlib: built and installed
 Dynamically linked AMIX C executable: works on AMIX baremetal
 Kernel and driver objects: work
-Code generation and assembly: -m68020, -m68030, -m68040, -m68060
+Code generation: -m68020, -m68030, -m68040 (use -m68040 for a 68060)
 68060-safe integer code: by default (no 64-bit multiply or divide)
 Preprocessing (-E): works, so autoconf configure scripts can use it
 C++ / g++: not complete yet
@@ -319,7 +319,8 @@ m68k-cbm-sysv4-scan060 --self-test
 It decides from the encoding (the opcode word and the extension word's size
 bit), not from the mnemonic, so it sees what inline asm or the assembler
 produced as well. gcc's switch jump tables are data inside `.text`; it follows
-each dispatch to its table and decodes only the code around it. A `CAS` on a
+each dispatch to its table and decodes only the code around it. That needs no
+symbols, so stripped, linked executables scan as well as objects do. A `CAS` on a
 misaligned operand also traps on the 68060 and no static scan can see it. It
 needs Python 3 and uses the toolchain's own `objdump`.
 
@@ -370,7 +371,10 @@ make test-mul64-run  the probe linked into a Linux m68k harness under
                      rewritten one gives the original's 68020 results and
                      condition codes on a 68020 and a 68060 (rule 11)
 make test-scan060    the scanner's self-test on encodings this toolchain
-                     assembled, including a switch table read as movep
+                     assembled, including a switch table read as movep, in
+                     an object and in a stripped executable linked at
+                     0x80000000 (table skipped, movep and 64-bit multiply
+                     after it still found)
 ```
 
 The first four compile with `-c` at both `-O0` and `-O` and inspect the object
@@ -412,8 +416,10 @@ AMIX_CRT_DIR=$SYSROOT/usr/ccs/lib
 
 `CPUFLAGS` selects the assembler architecture as well as code generation. The
 wrapper scans the compile line for `-m68030`, `-m68040` or `-m68060` and passes
-the same flag to `as`; with none of them present it assembles `-m68020`. The
-choice changes the opcodes emitted, so it is not just a validity check:
+the same flag to `as`; with none of them present it assembles `-m68020`. GCC
+2.7.2.3 itself has no `-m68060` (`cc1: Invalid option '68060'`), so code for a
+68060 is compiled with `-m68040`. The choice changes the opcodes emitted, so it
+is not just a validity check:
 
 - at `-m68020` gcc emits `FSGLMUL`/`FSGLDIV` for single-precision multiply and
   divide. The 68060 implements neither, so every one of them traps into the

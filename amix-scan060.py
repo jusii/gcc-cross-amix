@@ -136,7 +136,10 @@ def table_ranges(listing, data, secs):
         m = JMPTAB.match(raw)
         if not m:
             continue
-        jmp, t = int(m.group(1), 16), int(m.group(2), 16)
+        # binutils 2.8.1 objdump on a 64-bit host prints a target at or
+        # above 0x80000000 sign-extended ("ffffffff80002af4"): an AMIX
+        # executable's text starts at 0x80000000, so keep 32 bits.
+        jmp, t = int(m.group(1), 16), int(m.group(2), 16) & 0xffffffff
         if not (jmp < t <= jmp + 64):
             continue
         end, a, n = None, t, 0
@@ -198,6 +201,17 @@ def scan_elf(path, objdump):
     return total, hits, len(skip)
 
 
+def has_symtab(path):
+    """ELF32 big-endian -> does it carry a SHT_SYMTAB section?"""
+    with open(path, "rb") as fp:
+        data = fp.read()
+    shoff = struct.unpack(">I", data[32:36])[0]
+    shentsize, shnum = struct.unpack(">HH", data[46:50])
+    return any(struct.unpack(">I", data[shoff + i * shentsize + 4:
+                                         shoff + i * shentsize + 8])[0] == 2
+               for i in range(shnum))
+
+
 def ar_members(path, tmp):
     """GNU/SVR4 ar archive -> [(member_name, extracted_path)] of m68k ELFs."""
     with open(path, "rb") as fp:
@@ -252,6 +266,9 @@ def targets_of(path, tmp):
     return []
 
 
+TABLE = ("f:\n\tjmp 6(%pc,%d0.w)\n\t.long 2\n"
+         ".T:\n\t.word 0x0108\n\t.word 0x0108\n\t.space 0x104\n")
+
 SELF_TEST = [
     # (assembler body, expect a hit, what it is)
     ("\t.word 0x4c6e,0x1c02,0x0010\n", True,
@@ -272,14 +289,22 @@ SELF_TEST = [
      "mulu.l as assembled     (64-bit product)"),
     # a switch dispatch whose table entries (0x0108) decode as movep when
     # read as code: the table must be skipped, the code after it scanned
-    ("f:\n\tjmp 6(%pc,%d0.w)\n\t.long 2\n"
-     ".T:\n\t.word 0x0108\n\t.word 0x0108\n\t.space 0x104\n"
-     "\tnop\n\trts\n", False,
+    (TABLE + "\tnop\n\trts\n", False,
      "switch table read as movep, skipped"),
-    ("f:\n\tjmp 6(%pc,%d0.w)\n\t.long 2\n"
-     ".T:\n\t.word 0x0108\n\t.word 0x0108\n\t.space 0x104\n"
-     "\tmulu.l &5,%d1:%d0\n\trts\n", True,
+    (TABLE + "\tmulu.l &5,%d1:%d0\n\trts\n", True,
      "code after a switch table still scanned"),
+]
+
+# The same shapes linked at 0x80000000, where AMIX executables start, and
+# stripped: no symbols, and binutils 2.8.1 objdump prints the table address
+# sign-extended.
+SELF_TEST_LINKED = [
+    (TABLE + "\tnop\n\trts\n", False,
+     "stripped executable: switch table skipped"),
+    (TABLE + "\tmovep.w 0(%a0),%d0\n\trts\n", True,
+     "stripped executable: movep after a table"),
+    (TABLE + "\tmulu.l &5,%d1:%d0\n\trts\n", True,
+     "stripped executable: 64-bit product"),
 ]
 
 
@@ -287,17 +312,34 @@ def self_test():
     """Prove the detector fires, on bytes this toolchain really produced."""
     objdump = find_tool("objdump", "AMIX_OBJDUMP")
     asm = find_tool("as", "AMIX_AS")
+    ld = find_tool("ld", "AMIX_LD")
+    strip = find_tool("strip", "AMIX_STRIP")
+    cases = [c + (False,) for c in SELF_TEST]
+    cases += [c + (True,) for c in SELF_TEST_LINKED]
     ok = True
     with tempfile.TemporaryDirectory(prefix="scan060-st.") as tmp:
-        for i, (body, want, what) in enumerate(SELF_TEST):
+        for i, (body, want, what, linked) in enumerate(cases):
             s = os.path.join(tmp, "p%d.s" % i)
             o = os.path.join(tmp, "p%d.o" % i)
             with open(s, "w") as fp:
                 fp.write("\t.text\n" + body)
-            r = subprocess.run([asm, "-m68020", "-o", o, s],
-                               capture_output=True, text=True)
+            steps = [[asm, "-m68020", "-o", o, s]]
+            if linked:
+                x = os.path.join(tmp, "p%d" % i)
+                steps += [[ld, "-Ttext", "0x80000000", "-e", "f", "-o", x, o],
+                          [strip, x]]
+                o = x
+            for cmd in steps:
+                r = subprocess.run(cmd, capture_output=True, text=True)
+                if r.returncode != 0:
+                    break
             if r.returncode != 0:
-                print("  FAIL %-44s -> as: %s" % (what, r.stderr.strip()[:80]))
+                print("  FAIL %-44s -> %s: %s" % (what, os.path.basename(
+                      cmd[0]), r.stderr.strip()[:80]))
+                ok = False
+                continue
+            if linked and has_symtab(o):
+                print("  FAIL %-44s -> strip left a symbol table" % what)
                 ok = False
                 continue
             total, hits, ntab = scan_elf(o, objdump)

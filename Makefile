@@ -1173,7 +1173,8 @@ test-mul64-run: refresh-gcc-wrapper env
 	AMIX_SYSROOT="$(SYSROOT)" sh $(HERE)/tests/mul64/run.sh $(TARGET_CC) $(BUILDDIR)/test/mul64-run
 
 # The scanner's own self-test: known encodings assembled by this toolchain,
-# including a switch table whose entries decode as movep.
+# including a switch table whose entries decode as movep, both in an object and
+# in a stripped executable linked at 0x80000000 like an AMIX program.
 test-scan060: refresh-gcc-wrapper
 	$(PREFIX)/bin/$(TARGET)-scan060 --self-test
 
