@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-05 — 68060-safe integer code by default; scan060 (2ab2b22, 80b6d67)
+
+gcc 2.7.2.3 emits the 64-bit-product `muls.l/mulu.l <ea>,%dH:%dL` for every divide or modulo by a constant and
+for (u64)a*b, and a 68060 traps on it (vector 61). fix_asm now rewrites each one into 16x16 `mulu.w` partial
+products with the same result, registers and CCR (X included); any 64-bit multiply or divide left afterwards
+fails the compile. Opt out with `AMIX_MUL64=keep` or `-mmul64`. An object without the form is byte-identical.
+New `m68k-cbm-sysv4-scan060` (optional `AMIX_SCAN060=1` post-check), which also finds switch tables in
+executables linked at 0x80000000. Gates test-mul64, test-mul64-run (qemu 68020/68060), test-scan060.
+README: gcc 2.7.2.3 has no -m68060; use -m68040 for 040/060 code.
+
 ## 2026-09-29 — the wrapper keeps gcc -d<X> flags off ld; the sysroot is guarded
 
 A link with `-dM` could make ld take the next argument, the sysroot libc.so.1, as a map file and overwrite it (it did, 2026-09-28). `make sysroot` leaves the stock files read-only; a `sysroot-check` target and env.sh refuse a non-ELF libc.
