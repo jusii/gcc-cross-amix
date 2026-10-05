@@ -201,6 +201,78 @@ fix_asm()
 		s{^(\s*)fmovm(\.[a-z])}{$1fmovem$2}gm;
 		s{^(\s*mov)(\s+&\d+,%d[0-7]\s*)$}{$1.l$2}gm;
 	' "$1"
+
+	# 68060: expand the 32x32->64 multiply.  gcc 2.7.2.3 emits the 64-bit-
+	# product "muls.l/mulu.l <ea>,%dH:%dL" (MULS.L/MULU.L <ea>,Dh:Dl, ext-word
+	# SIZE bit set) for every divide or modulo by a constant -- the
+	# smulsi3_highpart/umulsi3_highpart patterns -- and for (u64)a*b, at every
+	# optimisation level.  The 68020/030/040 execute it; the 68060 does not
+	# implement it and raises vector 61 ("unimplemented integer instruction"),
+	# which AMIX has no emulation for, so the process is killed.  gcc has no
+	# switch that avoids the form, so each such line becomes an equivalent
+	# sequence of 16x16 "mulu.w" partial products that every 680x0 from the
+	# 68020 up executes.  The sequence
+	#
+	#   - evaluates <ea> exactly once, first, before the stack pointer moves
+	#     (so %sp- and %fp-relative operands read what the original did);
+	#   - writes only %dH:%dL; every other register is saved and restored;
+	#   - leaves the CCR as the hardware instruction does: N = bit 63,
+	#     Z = the 64-bit result is zero, V = C = 0, X unchanged (X is saved
+	#     with "mov.w %cc" before the first add and put back after the last);
+	#   - keeps all its data above %sp (32 bytes, interrupt- and signal-safe)
+	#     and leaves %sp where it found it.
+	#
+	# Signed products are the unsigned product minus (a<0 ? b<<32 : 0) and
+	# (b<0 ? a<<32 : 0).  ON by default; AMIX_MUL64=keep, or -mmul64 on the
+	# command line, leaves the 64-bit form alone for code that must reproduce
+	# older objects and will never run on a 68060.  A line that does not
+	# contain the 64-bit form is not touched, so an object without one is
+	# byte-identical either way.  ("make test-mul64" gates the encoding and
+	# "make test-mul64-run" the results on a 68060 and a 68020 under qemu.)
+	local mul64="${amix_mul64_mode:-${AMIX_MUL64:-expand}}"
+	test "$mul64" = keep && return 0
+	perl -pi -e '
+		if (/^(\s*)mul([su])\.l\s+(.+?),(%d[0-7]):(%d[0-7])\s*$/) {
+			my ($i, $sg, $ea, $dh, $dl) = ($1, $2, $3, $4, $5);
+			# frame, from %sp: 0..16 %d0-%d4, 20 CCR then result flags,
+			# 24 a = %dL then high word, 28 b = <ea> then low word
+			my @o = (
+			  "mov.l $ea,-(%sp)", "mov.l $dl,-(%sp)", "subq.l &4,%sp",
+			  "mov.l %d4,-(%sp)", "mov.l %d3,-(%sp)", "mov.l %d2,-(%sp)",
+			  "mov.l %d1,-(%sp)", "mov.l %d0,-(%sp)", "mov.w %cc,20(%sp)",
+			  "mov.l 24(%sp),%d0", "mov.l 28(%sp),%d1",
+			  "mov.l %d0,%d2", "swap %d2", "mov.l %d1,%d3", "swap %d3",
+			  "mov.w %d0,%d4", "mulu.w %d1,%d4", "mulu.w %d3,%d0",
+			  "mulu.w %d2,%d1", "mulu.w %d3,%d2",
+			  "add.l %d1,%d0", "moveq &0,%d1", "addx.l %d1,%d1",
+			  "swap %d1", "add.l %d1,%d2",
+			  "mov.l %d0,%d1", "clr.w %d1", "swap %d1", "add.l %d1,%d2",
+			  "swap %d0", "clr.w %d0", "add.l %d0,%d4",
+			  "moveq &0,%d1", "addx.l %d1,%d2");
+			push @o, ("mov.l 24(%sp),%d0", "mov.l 28(%sp),%d1",
+			  "tst.l %d0", "smi %d3", "extb.l %d3", "and.l %d1,%d3",
+			  "sub.l %d3,%d2", "tst.l %d1", "smi %d3", "extb.l %d3",
+			  "and.l %d0,%d3", "sub.l %d3,%d2") if $sg eq "s";
+			push @o, ("mov.w 20(%sp),%cc",
+			  "mov.l %d2,24(%sp)", "mov.l %d4,28(%sp)",
+			  "tst.l %d4", "sne %d3", "and.l &1,%d3", "or.l %d2,%d3",
+			  "mov.l %d3,20(%sp)",
+			  "mov.l (%sp)+,%d0", "mov.l (%sp)+,%d1", "mov.l (%sp)+,%d2",
+			  "mov.l (%sp)+,%d3", "mov.l (%sp)+,%d4",
+			  "mov.l 4(%sp),$dh", "mov.l 8(%sp),$dl", "tst.l (%sp)",
+			  "lea 12(%sp),%sp");
+			$_ = join("", map { "$i$_\n" } @o);
+		}
+	' "$1"
+	# Fail closed on any 64-bit form still present: an unexpanded multiply,
+	# a 64-bit-dividend divide (the 32-bit remainder divide is spelled
+	# divsl.l/divul.l by now), or an SGS tdivs/tdivu the rule above missed.
+	# gcc emits no 64/32 divide of its own; these can only come from inline
+	# asm, and assembling them would trap on a 68060.
+	if grep -nE '^[[:space:]]*(mul[su]\.l[[:space:]].*,%d[0-7]:%d[0-7][[:space:]]*$|div[su]\.l[[:space:]].*:|tdiv[su])' "$1" >&2; then
+		echo "amix gcc wrapper: ${src:-$1}: 68060-unimplemented 64-bit multiply or divide left (above); AMIX_MUL64=keep or -mmul64 allows it" >&2
+		return 1
+	fi
 }
 
 compile_one()
@@ -231,6 +303,23 @@ compile_one()
 	"$real" -S "${common_cflags[@]}" "$@" "$src" -o "$asmfile"
 	fix_asm "$asmfile"
 	"$as" "$asarch" -o "$obj" "$asmfile"
+
+	# Optional post-check: AMIX_SCAN060=1 runs the installed scanner over
+	# the object and fails the compile, removing the object, if it holds an
+	# instruction the 68060 does not implement (64-bit multiply or divide,
+	# MOVEP, CMP2, CHK2, CAS2).  It decides from the encoding, so it also
+	# sees what inline asm or the assembler produced, not just what the
+	# rewrite above looked for.
+	case "${AMIX_SCAN060:-0}" in
+		0|no|'') ;;
+		*)
+			if ! "$bindir/$target-scan060" --quiet "$obj" >&2; then
+				rm -f "$obj"
+				echo "amix gcc wrapper: $src: 68060 scan failed (AMIX_SCAN060)" >&2
+				return 1
+			fi
+			;;
+	esac
 }
 
 # fix (linking): emit the ld argument for one "-lNAME", preferring the "-lNAME"
@@ -297,6 +386,28 @@ resolve_lib()
 	printf 'amix gcc wrapper: cannot resolve -l%s\n' "$name" >&2
 	return 1
 }
+
+# -mmul64 / -mno-mul64 select the 68060 multiply expansion in fix_asm (default
+# expand, i.e. -mno-mul64).  They are wrapper options: gcc 2.7.2.3 knows neither,
+# so they are taken off the command line here, before any path hands the
+# arguments to the real compiler.  The last one given wins over AMIX_MUL64.
+amix_mul64_mode="${AMIX_MUL64:-expand}"
+args=()
+for arg in "$@"; do
+	case "$arg" in
+		-mmul64) amix_mul64_mode=keep ;;
+		-mno-mul64) amix_mul64_mode=expand ;;
+		*) args+=("$arg") ;;
+	esac
+done
+set -- "${args[@]}"
+case "$amix_mul64_mode" in
+	expand|keep) ;;
+	*)
+		echo "amix gcc wrapper: AMIX_MUL64 must be 'expand' or 'keep', not '$amix_mul64_mode'" >&2
+		exit 1
+		;;
+esac
 
 has_c=no
 has_S=no

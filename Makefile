@@ -91,7 +91,7 @@ LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 	_floatdidf _floatdisf _floatdixf _fixunsdfdi _fixdfdi _fixunssfdi \
 	__gcc_bcmp _clear_cache _shtab _trampoline
 
-.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc gcc-full install-gcc-wrapper refresh-gcc-wrapper install-target-ar libgcc install-libgcc env test-random test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir test-dtneeded test-kernel-volatile test-user-volatile print-vars clean distclean
+.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc gcc-full install-gcc-wrapper refresh-gcc-wrapper install-target-ar libgcc install-libgcc env test-random test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir test-dtneeded test-kernel-volatile test-user-volatile test-mul64 test-mul64-run test-scan060 print-vars clean distclean
 
 all: install-binutils sysroot install-gcc install-gcc-wrapper install-target-ar install-libgcc env
 
@@ -124,6 +124,9 @@ help:
 	@echo "  make test-dtneeded   DT_NEEDED names resolve on the guest, not on the build host"
 	@echo "  make test-kernel-volatile  spl()/splx() and MMIO volatile survive AMIX_KERNEL_CFLAGS"
 	@echo "  make test-user-volatile    volatile polls and const data survive AMIX_USER_CFLAGS"
+	@echo "  make test-mul64      No 68060-unimplemented 64-bit multiply; opt-out byte-exact"
+	@echo "  make test-mul64-run  The expansion computes what a 68020 does, and runs on a 68060 (qemu)"
+	@echo "  make test-scan060    The 68060 instruction scanner's self-test"
 	@echo ""
 	@echo "Useful overrides:"
 	@echo "  make PREFIX=/opt/amix-cross"
@@ -403,6 +406,8 @@ gcc-full: $(GCC_BUILD)/config.status check-runtime
 define install_gcc_wrapper
 	sed 's/@TARGET@/$(TARGET)/g' $(HERE)/amix-gcc-wrapper.sh > $(PREFIX)/bin/$(TARGET)-gcc
 	chmod 755 $(PREFIX)/bin/$(TARGET)-gcc
+	sed 's/@TARGET@/$(TARGET)/g' $(HERE)/amix-scan060.py > $(PREFIX)/bin/$(TARGET)-scan060
+	chmod 755 $(PREFIX)/bin/$(TARGET)-scan060
 endef
 
 install-gcc-wrapper: install-gcc
@@ -1146,6 +1151,31 @@ test-user-volatile: refresh-gcc-wrapper
 		echo "  FAIL const table has nm type '$$tbl', want r (const dropped)"; status=1; \
 	fi; \
 	test $$status -eq 0 && echo "test-user-volatile PASS: volatile polls and const data survive AMIX_USER_CFLAGS"
+
+# The 68060 multiply expansion in fix_asm (see amix-gcc-wrapper.sh).  gcc emits
+# the 64-bit-product "mulu.l/muls.l <ea>,%dH:%dL" for every divide or modulo by
+# a constant; the 68060 does not implement it.  tests/mul64/probe.c makes gcc
+# emit it in every operand and register shape.  test-mul64 checks the objects
+# with the scanner: the expanded object is clean, the AMIX_MUL64=keep one still
+# holds the 64-bit form (so the probe bites) and -mmul64 equals it byte for
+# byte, an object without the form is byte-identical either way, a leftover
+# 64-bit multiply/divide fails the compile, and AMIX_SCAN060=1 rejects a movep.
+test-mul64: refresh-gcc-wrapper env
+	AMIX_SYSROOT="$(SYSROOT)" sh $(HERE)/tests/mul64/check.sh $(TARGET_CC) $(BUILDDIR)/test/mul64
+
+# The same probe RUN: linked into a Linux m68k harness and executed under
+# qemu-m68k as a 68020 and a 68060, at -O0, -O, -O2, -O2 -fomit-frame-pointer
+# and -m68040 -O.  The original object must trap on the 68060; the expanded one
+# must give the original's 68020 checksum on both CPUs.  The checksum covers the
+# results and the CCR (X N Z V C) after the multiply.  Needs qemu-m68k and a
+# Linux m68k gcc (LINUX_M68K_CC, default m68k-linux-gnu-gcc).
+test-mul64-run: refresh-gcc-wrapper env
+	AMIX_SYSROOT="$(SYSROOT)" sh $(HERE)/tests/mul64/run.sh $(TARGET_CC) $(BUILDDIR)/test/mul64-run
+
+# The scanner's own self-test: known encodings assembled by this toolchain,
+# including a switch table whose entries decode as movep.
+test-scan060: refresh-gcc-wrapper
+	$(PREFIX)/bin/$(TARGET)-scan060 --self-test
 
 clean:
 	rm -rf $(BUILDDIR)

@@ -16,6 +16,7 @@ Target libgcc.a, ar and ranlib: built and installed
 Dynamically linked AMIX C executable: works on AMIX baremetal
 Kernel and driver objects: work
 Code generation and assembly: -m68020, -m68030, -m68040, -m68060
+68060-safe integer code: by default (no 64-bit multiply or divide)
 Preprocessing (-E): works, so autoconf configure scripts can use it
 C++ / g++: not complete yet
 ```
@@ -202,7 +203,9 @@ No separate preprocessor shim is needed.
 GCC 2.7.2.3 targets this machine through `config/m68k/sgs.h`, so it emits the
 native SGS assembler's spellings. GNU as 2.8.1 rejects some of them and, worse,
 assembles others *silently to a different instruction*. The wrapper runs ten
-rewrite rules over every generated `.s` file before handing it to `as`:
+rewrite rules over every generated `.s` file before handing it to `as`, and an
+eleventh that makes the integer code safe for a 68060 (see "68060 Integer Code"
+below):
 
 1. `.swbeg &N` becomes an explicit 4-byte filler. GNU as parses `.swbeg` but
    emits zero bytes, while gcc's switch dispatch assumes the 4 bytes are there,
@@ -233,13 +236,99 @@ rewrite rules over every generated `.s` file before handing it to `as`:
 9. The sized control-register `fmovm` becomes `fmovem`. The suffixless
    register-list form used in prologues is fine and is not touched.
 10. `mov &N,%dN` becomes `mov.l`.
+11. The 64-bit-product `muls.l`/`mulu.l <ea>,%dH:%dL` becomes an equivalent
+    sequence of 16x16 `mulu.w` multiplies, and any 64-bit multiply or divide
+    still left fails the compile. On by default; `AMIX_MUL64=keep` or `-mmul64`
+    turns it off.
 
 Rules 7 to 10 are shapes gcc emits at `-m68040`.
 
 Do not invoke `m68k-cbm-sysv4-gcc.real` directly. That is the unwrapped
 compiler, and its output is exactly what the rules above repair. Rules 2 and 6
 fail without any diagnostic, so code built that way assembles, links, runs and
-computes the wrong answer.
+computes the wrong answer; without rule 11 it is killed on a 68060.
+
+The rules apply to C the wrapper compiles itself (`-c` and compile-and-link).
+`-S` output is gcc's own, unrepaired, and `.s`/`.S` inputs are assembled as
+written.
+
+## 68060 Integer Code
+
+The 68060 does not implement some 68020/030/040 integer instructions. It raises
+vector 61 ("unimplemented integer instruction") for them, and AMIX has no
+software emulation, so the process that executes one is killed:
+
+```text
+MULU.L/MULS.L <ea>,Dh:Dl   32x32 -> 64-bit product
+DIVU.L/DIVS.L <ea>,Dr:Dq   64-bit dividend
+MOVEP, CMP2, CHK2, CAS2
+```
+
+GCC 2.7.2.3 emits the first of these for **every divide or modulo by a
+constant** (`x / 10`, `x % 1000`: the `smulsi3_highpart`/`umulsi3_highpart`
+patterns) and for `(unsigned long long) a * b`, at every optimisation level
+and every `-m680x0` flag; it has no `-m68060` and no option that avoids them.
+It emits none of the others. (A 64-bit-dividend divide used to appear through
+the SGS `tdivs` spelling; rule 2 fixed that.)
+
+So rule 11 rewrites each 64-bit multiply into 16x16 `mulu.w` partial products,
+which every 680x0 from the 68020 up executes. The sequence evaluates `<ea>`
+once, before the stack pointer moves; writes only `%dH:%dL`; saves and
+restores every other register; leaves the condition codes exactly as the
+hardware instruction does (N = bit 63, Z = 64-bit zero, V = C = 0, X
+unchanged); keeps its 32 bytes of scratch above `%sp`; and leaves `%sp` where it
+found it. It costs 51 instructions and 130 bytes (63 and 158 for the signed
+form) where there was one 4-to-8-byte instruction, so code with these sites is
+larger, and slower on a 68020/030/040, which would have run the original.
+
+After the rewrite the wrapper fails the compile if any 64-bit multiply or
+divide is still present, or an SGS `tdivs`/`tdivu` rule 2 did not rewrite. Such
+a line can only come from inline asm (gcc itself emits no 64/32 divide), and
+it would trap on a 68060.
+
+### Turning it off
+
+```sh
+AMIX_MUL64=keep m68k-cbm-sysv4-gcc ...     # environment, for a whole build
+m68k-cbm-sysv4-gcc -mmul64 ...             # per command
+m68k-cbm-sysv4-gcc -mno-mul64 ...          # per command, back on (the default)
+```
+
+The last of `-mmul64`/`-mno-mul64` on the command line wins over `AMIX_MUL64`;
+both flags are taken off the command line before gcc sees them. Turn it off
+only for code that will never run on a 68060 and must reproduce objects built
+before this rule existed. A line without the 64-bit form is never touched, so
+an object that contains none is byte-identical either way; only objects with
+divides or modulos by constants, or 64-bit products, change.
+
+`libgcc.a` needs nothing: on this target gcc does not predefine `__mc68020__`,
+so `longlong.h` uses its portable C, and the installed library has no 64-bit
+multiply or divide.
+
+### Checking objects: the scanner
+
+`make` installs `m68k-cbm-sysv4-scan060` next to the compiler. It disassembles
+objects, archives, executables or whole directories and reports every
+instruction the 68060 does not implement, with its address and symbol:
+
+```sh
+m68k-cbm-sysv4-scan060 foo.o libfoo.a prog
+m68k-cbm-sysv4-scan060 --self-test
+```
+
+It decides from the encoding (the opcode word and the extension word's size
+bit), not from the mnemonic, so it sees what inline asm or the assembler
+produced as well. gcc's switch jump tables are data inside `.text`; it follows
+each dispatch to its table and decodes only the code around it. A `CAS` on a
+misaligned operand also traps on the 68060 and no static scan can see it. It
+needs Python 3 and uses the toolchain's own `objdump`.
+
+With `AMIX_SCAN060=1` set, the wrapper runs the scanner over every object it
+compiles and fails the compile, removing the object, on any hit:
+
+```sh
+AMIX_SCAN060=1 make CC=m68k-cbm-sysv4-gcc
+```
 
 ## Regression Gates
 
@@ -270,6 +359,18 @@ make test-kernel-volatile
 make test-user-volatile
                      under AMIX_USER_CFLAGS, a volatile register poll
                      re-reads memory and a const table is read-only data
+make test-mul64      no 68060-unimplemented instruction in the probe at
+                     -O0/-O/-O2/-m68040; AMIX_MUL64=keep still has the
+                     64-bit form and -mmul64 matches it byte for byte; code
+                     without the form is byte-identical either way; a
+                     leftover 64-bit divide and, under AMIX_SCAN060=1, a
+                     movep fail the compile (rule 11)
+make test-mul64-run  the probe linked into a Linux m68k harness under
+                     qemu-m68k: the original object traps on a 68060, the
+                     rewritten one gives the original's 68020 results and
+                     condition codes on a 68020 and a 68060 (rule 11)
+make test-scan060    the scanner's self-test on encodings this toolchain
+                     assembled, including a switch table read as movep
 ```
 
 The first four compile with `-c` at both `-O0` and `-O` and inspect the object
@@ -279,6 +380,10 @@ needs nothing but the wrapper. `test-uint64` and `test-dtneeded` link, so like
 `test-dtneeded` additionally needs `libsocket.so` and `libnsl.so` there.
 `test-kernel-volatile` needs the AMIX headers (`AMIX_ROOT`), and
 `test-user-volatile` needs them in the sysroot (`SYSROOT`); see below.
+`test-mul64` and `test-scan060` need only the wrapper and Python 3.
+`test-mul64-run` also needs `qemu-m68k` and a Linux m68k cross gcc
+(`m68k-linux-gnu-gcc`, or set `LINUX_M68K_CC`); its probe and harness live in
+`tests/mul64/`.
 
 The gates test an installed toolchain, so run `make all` first. They reinstall
 only the wrapper script (`make refresh-gcc-wrapper`), so an edit to

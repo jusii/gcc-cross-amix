@@ -2,3 +2,5 @@ Makefile text eol=lf
 *.sh text eol=lf
 *.md text eol=lf
 .gitignore text eol=lf
+*.py text eol=lf
+*.c text eol=lf
