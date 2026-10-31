@@ -161,7 +161,7 @@ The wrapper also handles the cases a real build runs into:
   object directory. A non-recursive top-level `Makefile` compiling `sub/foo.c`
   is affected exactly as a VPATH build is; only a compile whose source is in
   the working directory is unchanged, because there the two locations coincide.
-  (The commit that landed the C half, `8ca9e3b`, stated the narrower "in-tree
+  (The commit that fixed the C half, `8ca9e3b`, stated the narrower "in-tree
   builds are unaffected"; that is wrong, and this is the correct scope.)
 
   For `.c` sources the wrapper used to keep the directory part and write
@@ -510,8 +510,8 @@ primitives in `<sys/inline.h>`, so gcc deletes `splx()` and any `spl6()` whose
 result only feeds it, and every MMIO `volatile` access is erased too (a 32-bit
 register poll read once, as a byte, then spinning on a register). The flags
 therefore carry `-Dvolatile=__volatile__ -Dconst=__const__` beside
-`-Dinline=__inline__`, which the header's `#ifndef` guards respect; this was
-found in audit T-9 (2026-09-27) and `make test-kernel-volatile` gates it.
+`-Dinline=__inline__`, which the header's `#ifndef` guards respect;
+`make test-kernel-volatile` gates it.
 Objects built with the old flags should be rebuilt.
 
 ### User CFLAGS: the same trap

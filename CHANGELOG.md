@@ -22,9 +22,9 @@ The same -Dvolatile=__volatile__ -Dconst=__const__ pair as AMIX_KERNEL_CFLAGS, f
 
 `-Dvolatile=__volatile__ -Dconst=__const__` added next to `-Dinline=__inline__`. Under `-traditional` the
 stock `<sys/types.h>` defined `volatile` and `const` as empty, so gcc deleted `spl6()`/`splx()` from
-`<sys/inline.h>` (their asm lost its volatile) and stopped treating MMIO accesses as volatile (review T-9).
+`<sys/inline.h>` (their asm lost its volatile) and stopped treating MMIO accesses as volatile.
 New gate `make test-kernel-volatile`; README section "Kernel CFLAGS: -traditional and volatile". Every
-kernel object built with the old flags was rebuilt (kerntools 5adc175).
+kernel object built with the old flags was rebuilt.
 
 ## 2026-09-15
 
@@ -37,7 +37,8 @@ kernel object built with the old flags was rebuilt (kerntools 5adc175).
   The branch now passes -o only when one was given. "make test-objdir" covers .c,
   .s and .S (object in the cwd, source dir clean, source byte-identical, explicit -o
   honoured, .S preprocessed) and reads /dev/null so a reintroduced empty -o fails
-  instead of hanging. A workspace-wide scan found no clobbered source.
+  instead of hanging. A scan of the source trees built with the wrapper found no
+  clobbered source.
 - README: corrected the scope of the "-c with no -o" change (7036952) -- the
   discriminator is the working directory versus the source's own directory, so a
   non-recursive Makefile compiling "sub/foo.c" from the tree top is affected as a
