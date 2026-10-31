@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-31 â README and CHANGELOG wording (c97cf2f)
+
+Internal review ids and a hash from another repository's private branch removed; no change to the toolchain.
+
 ## 2026-10-05 — 68060-safe integer code by default; scan060 (2ab2b22, 80b6d67)
 
 gcc 2.7.2.3 emits the 64-bit-product `muls.l/mulu.l <ea>,%dH:%dL` for every divide or modulo by a constant and
