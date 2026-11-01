@@ -168,6 +168,10 @@ fix_asm()
 	# The split is parenthesis-aware because memory operands contain
 	# commas of their own, e.g. "fcmp.s 4(%a0,%d0.l),%fp1".
 	perl -0pi -e '
+		# Rule 6 must not run twice on one file (a second swap undoes the
+		# first); fix_asm marks a file it has repaired, below.  Every other
+		# rule leaves nothing it would match again.
+		my $done = /^\| amix fix_asm$/m;
 		sub split_operands {
 			my ($s) = @_;
 			my $depth = 0;
@@ -185,7 +189,7 @@ fix_asm()
 			my ($prefix, $ops) = ($1, $2);
 			my ($left, $right) = split_operands($ops);
 			defined $right ? "$prefix$right,$left" : "$prefix$ops";
-		}egm;
+		}egm unless $done;
 		# Rounding-precision opcodes with an FPn source: gcc 2.7.2.3 emits
 		# the size suffix of the original C type (.s/.d), but a register
 		# source is always extended precision and gas rejects anything but
@@ -206,6 +210,11 @@ fix_asm()
 		s{^(\s*)fmovm(\.[a-z])}{$1fmovem$2}gm;
 		s{^(\s*mov)(\s+&\d+,%d[0-7]\s*)$}{$1.l$2}gm;
 	' "$1"
+
+	# The marker: a comment line, so the object is the same with or without
+	# it.  A file carrying it is in GNU as syntax already -- "-S" output, say,
+	# fed back to the compiler -- and rule 6 above leaves it alone.
+	grep -q '^| amix fix_asm$' "$1" || printf '%s\n' '| amix fix_asm' >> "$1"
 
 	# 68060: expand the 32x32->64 multiply.  gcc 2.7.2.3 emits the 64-bit-
 	# product "muls.l/mulu.l <ea>,%dH:%dL" (MULS.L/MULU.L <ea>,Dh:Dl, ext-word
@@ -280,53 +289,6 @@ fix_asm()
 	fi
 }
 
-compile_one()
-{
-	local src="$1"
-	local obj="$2"
-	shift 2
-	local asmfile
-
-	asmfile="$(mktemp "${TMPDIR:-/tmp}/amix-gcc.XXXXXX.s")"
-	tmpfiles+=("$asmfile")
-
-	# Assemble for whatever architecture the compile asked for.  This used to
-	# be hardcoded to -m68020, which silently capped the toolchain at 68020
-	# code generation: -m68040 compiles fine and then fails to assemble on
-	# 040-only opcodes.  That matters for more than exotica.  gcc at -m68020
-	# emits FSGLMUL/FSGLDIV for single-precision multiply and divide, and
-	# neither is implemented in the 68060's FPU -- every one of them traps into
-	# the FPSP and is emulated.  At -m68040 gcc emits FSMUL/FSDIV instead,
-	# which both the 040 and the 060 execute in hardware.
-	local asarch=-m68020
-	for a in "$@"; do
-		case "$a" in
-			-m68030|-m68040|-m68060) asarch="$a" ;;
-		esac
-	done
-
-	"$real" -S "${common_cflags[@]}" "$@" "$src" -o "$asmfile"
-	fix_asm "$asmfile"
-	"$as" "$asarch" -o "$obj" "$asmfile"
-
-	# Optional post-check: AMIX_SCAN060=1 runs the installed scanner over
-	# the object and fails the compile, removing the object, if it holds an
-	# instruction the 68060 does not implement (64-bit multiply or divide,
-	# MOVEP, CMP2, CHK2, CAS2).  It decides from the encoding, so it also
-	# sees what inline asm or the assembler produced, not just what the
-	# rewrite above looked for.
-	case "${AMIX_SCAN060:-0}" in
-		0|no|'') ;;
-		*)
-			if ! "$bindir/$target-scan060" --quiet "$obj" >&2; then
-				rm -f "$obj"
-				echo "amix gcc wrapper: $src: 68060 scan failed (AMIX_SCAN060)" >&2
-				return 1
-			fi
-			;;
-	esac
-}
-
 # fix (linking): emit the ld argument for one "-lNAME", preferring the "-lNAME"
 # form over an absolute path.  ld records a shared library in DT_NEEDED under
 # the name it was GIVEN, unless the library carries a DT_SONAME of its own.  On
@@ -395,7 +357,8 @@ resolve_lib()
 # -mmul64 / -mno-mul64 select the 68060 multiply expansion in fix_asm (default
 # expand, i.e. -mno-mul64).  They are wrapper options: gcc 2.7.2.3 knows neither,
 # so they are taken off the command line here, before any path hands the
-# arguments to the real compiler.  The last one given wins over AMIX_MUL64.
+# arguments to the real compiler.  The last one given wins over AMIX_MUL64, and
+# the choice reaches the assembler wrapper through AMIX_MUL64.
 amix_mul64_mode="${AMIX_MUL64:-expand}"
 args=()
 for arg in "$@"; do
@@ -413,6 +376,7 @@ case "$amix_mul64_mode" in
 		exit 1
 		;;
 esac
+export AMIX_MUL64="$amix_mul64_mode"
 
 has_c=no
 has_S=no
@@ -425,23 +389,104 @@ for arg in "$@"; do
 	esac
 done
 
-# fix (preprocessing): -E needs only the real preprocessor and the target
-# include path.  fix_asm exists to repair generated ASSEMBLY, and -E produces
-# none, so it is safe to hand the whole command line straight to the real cross
-# compiler with the same include path a compile uses (common_cflags).  Without
-# this, -E is unrecognised here and falls through to the parse loop's catch-all
-# below, which files any unknown dash-argument as an *ld* flag: "gcc -E foo.c"
-# then COMPILES AND LINKS foo.c instead of preprocessing it, emitting nothing on
-# stdout.  autoconf's "checking how to run the C preprocessor" step rejects that
-# and silently falls back to the build HOST's /lib/cpp, after which every
-# AC_CHECK_HEADER reads the host's /usr/include and HAVE_* is decided against
-# the wrong headers.  (Same dispatch as -S immediately below.)
+# Every compile goes through the real driver, and the real driver assembles
+# through the assembler wrapper it finds under GCC_EXEC_PREFIX
+# (lib/gcc-lib/<target>/<version>/as), which runs fix_asm over compiler
+# output before handing it to GNU as.  So -c, the compile half of a link, .i
+# input from "gcc -E" (ccache, distcc, -save-temps, creduce), -pipe and an
+# explicit "-x" all get the repairs; there is no path around them.  The
+# assembler wrapper knows compiler output by the .ident line cc1 ends every
+# file with, and leaves hand-written assembly (.s, .S) exactly as written.
+
+# -E: preprocessing only; no assembly, nothing to repair.  The target include
+# path goes first, as for a compile.  (Before -E was dispatched here, "gcc -E
+# foo.c" fell through to the link path and compiled and linked instead, and
+# autoconf fell back to the build host's /lib/cpp.)
 if test "$has_E" = yes; then
 	exec "$real" "${common_cflags[@]}" "$@"
 fi
 
-if test "$has_S" = yes; then
+# -c: the real driver does everything, with gcc's own rules for -o and for
+# naming objects (one ./<basename>.o per input in the working directory when
+# there is no -o) -- for .c, .i, .s and .S alike.
+if test "$has_c" = yes && test "$has_S" = no; then
+	prev=
+	for arg in "$@"; do
+		if test "$prev" = -o; then
+			for input in "$@"; do
+				case "$input" in -*) continue ;; esac
+				if test "$input" != "$arg" && test -e "$input" && test "$input" -ef "$arg"; then
+					echo "amix gcc wrapper: refusing to overwrite input file '$input'" >&2
+					exit 1
+				fi
+			done
+		fi
+		prev=$arg
+	done
 	exec "$real" "${common_cflags[@]}" "$@"
+fi
+
+# -S: the assembly is repaired before it is written, so what -S produces is
+# what the compiler assembles: valid GNU as input with the marker fix_asm
+# leaves, which a later "gcc -c foo.s" recognises and does not repair twice.
+# Each C or preprocessed-C input is compiled on its own to a temporary file;
+# the result goes where gcc would put it (-o, or ./<basename>.s), and "-o -"
+# writes it to standard output.  Other inputs produce nothing under -S, as with
+# gcc.
+if test "$has_S" = yes; then
+	s_flags=()
+	s_inputs=()
+	s_out=
+	lang=
+	while test $# -gt 0; do
+		case "$1" in
+			-o) test $# -gt 1 || { echo "amix gcc wrapper: -o needs an argument" >&2; exit 1; }
+			    s_out=$2; shift 2; continue ;;
+			-o*) s_out=${1#-o} ;;
+			-x) test $# -gt 1 || { echo "amix gcc wrapper: -x needs an argument" >&2; exit 1; }
+			    lang=$2; shift 2; continue ;;
+			-I|-D|-U|-include|-imacros|-idirafter|-iprefix|-iwithprefix|-iwithprefixbefore|-aux-info|-b|-V)
+			    test $# -gt 1 || { echo "amix gcc wrapper: $1 needs an argument" >&2; exit 1; }
+			    s_flags+=("$1" "$2"); shift 2; continue ;;
+			-S) ;;
+			-*) s_flags+=("$1") ;;
+			*) s_inputs+=("${lang:-none}:$1") ;;
+		esac
+		shift
+	done
+	n=0
+	for li in "${s_inputs[@]}"; do
+		l=${li%%:*} f=${li#*:}
+		case "$l:$f" in none:*.c|none:*.i|c:*|cpp-output:*) n=$((n + 1)) ;; esac
+	done
+	if test $n -gt 1 && test -n "$s_out" && test "$s_out" != -; then
+		echo "amix gcc wrapper: -o with -S and multiple sources is not supported" >&2
+		exit 1
+	fi
+	for li in "${s_inputs[@]}"; do
+		l=${li%%:*} f=${li#*:}
+		case "$l:$f" in
+			none:*.c|none:*.i) xl=() ;;
+			c:*|cpp-output:*) xl=(-x "$l") ;;
+			*) continue ;;
+		esac
+		dest=${s_out:-$(basename "$f")}
+		test -n "$s_out" || dest=${dest%.*}.s
+		if test "$dest" != - && test -e "$dest" && test "$dest" -ef "$f"; then
+			echo "amix gcc wrapper: refusing to overwrite input file '$f'" >&2
+			exit 1
+		fi
+		asmfile="$(mktemp "${TMPDIR:-/tmp}/amix-gcc.XXXXXX.s")"
+		tmpfiles+=("$asmfile")
+		"$real" "${common_cflags[@]}" -S "${s_flags[@]}" "${xl[@]}" "$f" -o "$asmfile"
+		src=$f fix_asm "$asmfile"
+		if test "$dest" = -; then
+			cat "$asmfile"
+		else
+			cp "$asmfile" "$dest"
+		fi
+	done
+	exit 0
 fi
 
 compile_flags=()
@@ -452,7 +497,6 @@ ld_flags=()
 lib_dirs=()
 libs=()
 out=a.out
-compile_out=
 skip=
 
 while test $# -gt 0; do
@@ -461,7 +505,6 @@ while test $# -gt 0; do
 
 	if test "$skip" = o; then
 		out="$arg"
-		compile_out="$arg"
 		skip=
 		continue
 	fi
@@ -497,14 +540,16 @@ while test $# -gt 0; do
 		-l*)
 			libs+=("${arg#-l}")
 			;;
-		*.c)
+		# Everything the real driver compiles or assembles: compiled to an
+		# object here, then linked.
+		*.c|*.i|*.s|*.S)
 			sources+=("$arg")
 			;;
 		*.o)
 			objects+=("$arg")
 			;;
 		# fix (linking): a static archive or shared library named directly on the
-		# command line must be linked AFTER the objects that reference it.  The .c
+		# command line must be linked AFTER the objects that reference it.  The
 		# sources are compiled and their objects APPENDED to objects[] further
 		# down, so a .a/.so left in objects[] here would sort before them:
 		# "gcc prog.c libfoo.a" would link as "libfoo.a prog.o", and single-pass
@@ -527,99 +572,16 @@ while test $# -gt 0; do
 done
 
 for input in "${sources[@]}" "${objects[@]}" "${archives[@]}"; do
-	if test -n "$input" && test "$out" = "$input"; then
+	if test -n "$input" && test -e "$input" && test "$out" -ef "$input"; then
 		echo "amix gcc wrapper: refusing to overwrite input file '$input'" >&2
 		exit 1
 	fi
 done
 
-if test "$has_c" = yes; then
-	if test "${#sources[@]}" -eq 0; then
-		# -c with no *.c source.  Everything the parse loop filed as an
-		# "object" -- .s, .S, .i, or any other input the wrapper does not
-		# compile itself -- is handed to the real driver, which knows how
-		# to assemble or compile each of them.
-		#
-		# fix (compiling): pass -o only when one was actually given.  This
-		# used to pass "-o $compile_out" unconditionally, so a plain
-		# "cc -c foo.s" reached the real compiler as "-c -o '' foo.s".
-		# gcc 2.7.2.3 splices its spec strings argument by argument and an
-		# EMPTY argument disappears from the command line it builds, so
-		# the assembler was run as
-		#
-		#     as -V -Qy -o ../src/probe.s
-		#
-		# -- the source had become the -o ARGUMENT and as read its input
-		# from stdin.  The consequences are worse than a missing object:
-		# with stdin at EOF (any non-interactive build) as wrote an empty
-		# module OVER THE ASSEMBLY SOURCE and exited 0, so the .s file was
-		# replaced by an ELF object, nothing appeared in the working
-		# directory, and nothing was printed; on a terminal the compile
-		# simply hung waiting for input that never came.  The ordinary
-		# SVR4-era way to build assembly,
-		#
-		#     .s.o:
-		#             $(CC) $(CFLAGS) -c $<
-		#
-		# hits this on every .s file it touches.  (For a .S input the file
-		# the assembler clobbers is gcc's own preprocessed temporary, not
-		# the source, so that case merely loses the object.)
-		#
-		# With -o left off, the real driver applies its own -c rule, which
-		# is the same rule the *.c path below implements by hand: one
-		# object per input, in the CURRENT WORKING DIRECTORY, named after
-		# the input's basename -- "cc -c ../src/foo.s" writes "./foo.o"
-		# and leaves ../src alone.  That covers .s, .S and .i alike, and
-		# multiple inputs in one command, without this branch having to
-		# reimplement the naming.  An explicit -o is still passed through
-		# verbatim.  ("make test-objdir" gates .c, .s and .S.)
-		compile_out_args=()
-		if test -n "$compile_out"; then
-			for input in "${objects[@]}"; do
-				if test -n "$input" && test "$compile_out" = "$input"; then
-					echo "amix gcc wrapper: refusing to overwrite input file '$input'" >&2
-					exit 1
-				fi
-			done
-			compile_out_args=(-o "$compile_out")
-		fi
-		exec "$real" "${common_cflags[@]}" -c "${compile_flags[@]}" "${compile_out_args[@]}" "${objects[@]}"
-	fi
-	if test "${#sources[@]}" -gt 1 && test -n "$compile_out"; then
-		echo "amix gcc wrapper: -o with -c and multiple sources is not supported" >&2
-		exit 1
-	fi
-	# fix (compiling): with -c and no -o, the object belongs in the CURRENT
-	# WORKING DIRECTORY under the source's basename -- "cc -c ../src/foo.c"
-	# writes "./foo.o".  This used to strip only the suffix and keep the
-	# directory part, so the object was written NEXT TO THE SOURCE, in
-	# ../src/foo.o.  Every build with a separate object directory then failed
-	# at the link: the compile reported success, the object was nowhere make
-	# expected it, and ld stopped with "cannot open foo.o: No such file or
-	# directory".  That is the normal shape of a VPATH/srcdir build -- gcc's
-	# own build (which compiles ../gcc-src/*.c into the build directory),
-	# imake/X11, and any autoconf package configured from a separate build
-	# tree -- so it was not an exotic case.  Worse, the stray objects landed
-	# in the source tree, where a second build could pick them up.
-	#
-	# With an explicit -o nothing changes: $compile_out is used verbatim,
-	# including a path into another directory.  ("make test-objdir" gates
-	# both halves.)
-	for src in "${sources[@]}"; do
-		obj="$compile_out"
-		test -n "$obj" || {
-			obj="$(basename "$src")"
-			obj="${obj%.*}.o"
-		}
-		compile_one "$src" "$obj" "${compile_flags[@]}"
-	done
-	exit 0
-fi
-
 for src in "${sources[@]}"; do
 	obj="$(mktemp "${TMPDIR:-/tmp}/amix-gcc.XXXXXX.o")"
 	tmpfiles+=("$obj")
-	compile_one "$src" "$obj" "${compile_flags[@]}"
+	"$real" "${common_cflags[@]}" -c "${compile_flags[@]}" "$src" -o "$obj"
 	objects+=("$obj")
 done
 

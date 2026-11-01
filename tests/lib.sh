@@ -16,4 +16,6 @@ TOOL=${CC%-gcc}
 OBJDUMP=$TOOL-objdump
 NM=$TOOL-nm
 SCAN060=$TOOL-scan060
-mkdir -p "$W"
+mkdir -p "$W" "$W/tmp"
+# the compiler's temporary files stay with the gate
+export TMPDIR="$W/tmp"

@@ -117,7 +117,7 @@ LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 	_fixsfdi _fixxfdi _fixunsxfdi _fixunsdfsi _fixunssfsi _fixunsxfsi \
 	__gcc_bcmp _clear_cache _shtab _trampoline
 
-.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc gcc-full install-gcc-wrapper install-target-ar libgcc install-libgcc env stage check test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir test-dtneeded test-kernel-volatile test-user-volatile test-kernel-object test-mul64 test-mul64-run test-scan060 print-vars clean distclean
+.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc gcc-full install-gcc-wrapper install-target-ar libgcc install-libgcc env stage check test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir test-paths test-dtneeded test-kernel-volatile test-user-volatile test-kernel-object test-mul64 test-mul64-run test-scan060 print-vars clean distclean
 
 # A recipe that fails part-way never leaves its target behind looking finished.
 .DELETE_ON_ERROR:
@@ -447,7 +447,9 @@ $(GCC_INSTALL_STAMP): $(GCC_STAMP)
 	cp $(GCC_BUILD)/cc1 $(GCC_LIBDIR)/cc1
 	cp $(GCC_BUILD)/cccp $(GCC_LIBDIR)/cpp
 	$(HOST_STRIP) $(GCC_REAL) $(GCC_LIBDIR)/cc1 $(GCC_LIBDIR)/cpp
-	PATH="$(PATH_FOR_BUILD)" $(GCC_BUILD)/xgcc -B$(GCC_BUILD)/ -dumpspecs > $(GCC_LIBDIR)/specs
+	PATH="$(PATH_FOR_BUILD)" $(GCC_BUILD)/xgcc -B$(GCC_BUILD)/ -dumpspecs > $(GCC_LIBDIR)/specs.amix-tmp
+	$(call fix_specs,$(GCC_LIBDIR)/specs.amix-tmp,$(GCC_LIBDIR)/specs)
+	@t='$(GCC_LIBDIR)/specs.amix-tmp'; rm -f "$${t:?}"
 	chmod 755 $(GCC_REAL) $(GCC_LIBDIR)/cc1 $(GCC_LIBDIR)/cpp
 	touch $@
 
@@ -461,15 +463,30 @@ gcc-full: $(GCC_BUILD)/config.status check-runtime
 		MAKEINFO="$(AMIX_MAKEINFO)" \
 		$(GCC_FULL_BUILD_TARGETS)
 
-# $(call install_gcc_wrapper,PREFIX): the wrapper and the 68060 scanner
+# The specs, corrected: the assembler gets the -m680x0 flags, so the assembler
+# wrapper assembles for the CPU the code was compiled for.
+# $(call fix_specs,IN,OUT)
+define fix_specs
+	sed '/^\*asm:$$/{n;/%{m68\*}/!s/^/%{m68*} %{mc68*} /;}' $(1) > $(2)
+endef
+
+# $(call install_gcc_wrapper,PREFIX): the wrapper, the 68060 scanner and the
+# assembler wrapper the real driver runs, with fix_asm copied into it from
+# amix-gcc-wrapper.sh (which keeps the one definition).
 define install_gcc_wrapper
 	sed 's/@TARGET@/$(TARGET)/g' $(HERE)/amix-gcc-wrapper.sh > $(1)/bin/$(TARGET)-gcc
 	chmod 755 $(1)/bin/$(TARGET)-gcc
 	sed 's/@TARGET@/$(TARGET)/g' $(HERE)/amix-scan060.py > $(1)/bin/$(TARGET)-scan060
 	chmod 755 $(1)/bin/$(TARGET)-scan060
+	sed -n '/^fix_asm()/,/^}$$/p' $(HERE)/amix-gcc-wrapper.sh > $(1)/lib/gcc-lib/$(TARGET)/$(GCC_VERSION)/as.fix_asm
+	sed -e 's/@TARGET@/$(TARGET)/g' -e '/^@FIX_ASM@$$/{r $(1)/lib/gcc-lib/$(TARGET)/$(GCC_VERSION)/as.fix_asm' -e 'd;}' \
+		$(HERE)/amix-as-wrapper.sh > $(1)/lib/gcc-lib/$(TARGET)/$(GCC_VERSION)/as
+	@f='$(1)/lib/gcc-lib/$(TARGET)/$(GCC_VERSION)/as.fix_asm'; rm -f "$${f:?}"
+	grep -q '^fix_asm()' $(1)/lib/gcc-lib/$(TARGET)/$(GCC_VERSION)/as
+	chmod 755 $(1)/lib/gcc-lib/$(TARGET)/$(GCC_VERSION)/as
 endef
 
-$(WRAPPER_STAMP): $(GCC_INSTALL_STAMP) $(HERE)/amix-gcc-wrapper.sh $(HERE)/amix-scan060.py
+$(WRAPPER_STAMP): $(GCC_INSTALL_STAMP) $(HERE)/amix-gcc-wrapper.sh $(HERE)/amix-as-wrapper.sh $(HERE)/amix-scan060.py
 	$(call install_gcc_wrapper,$(PREFIX))
 	touch $@
 
@@ -564,7 +581,7 @@ STAGE_CC := $(STAGE)/bin/$(TARGET)-gcc
 TEST_ENV = CC='$(STAGE_CC)' CPUFLAGS='$(CPUFLAGS)' SYSROOT='$(SYSROOT)' \
 	AMIX_SYSROOT='$(SYSROOT)' AMIX_CRT_DIR='$(AMIX_CRT_DIR)' AMIX_ROOT='$(AMIX_ROOT)' \
 	AMIX_KERNEL_CFLAGS='$(AMIX_KERNEL_CFLAGS)' AMIX_USER_CFLAGS='$(AMIX_USER_CFLAGS)'
-CHECK_GATES := divmod float fcmp bitfield objdir uint64 dtneeded kernel-volatile \
+CHECK_GATES := divmod float fcmp bitfield objdir paths uint64 dtneeded kernel-volatile \
 	user-volatile kernel-object mul64 scan060
 
 stage: sysroot-check
@@ -574,10 +591,11 @@ stage: sysroot-check
 	@for f in $(PREFIX)/bin/$(TARGET)-*; do ln -s "$$f" $(STAGE)/bin/ || exit 1; done
 	@for f in $(GCC_LIBDIR)/*; do ln -s "$$f" $(STAGE_LIBDIR)/ || exit 1; done
 	@ln -s $(PREFIX)/$(TARGET) $(STAGE)/$(TARGET)
-	@rm -f $(STAGE)/bin/$(TARGET)-gcc $(STAGE)/bin/$(TARGET)-scan060
+	@rm -f $(STAGE)/bin/$(TARGET)-gcc $(STAGE)/bin/$(TARGET)-scan060 $(STAGE_LIBDIR)/as $(STAGE_LIBDIR)/specs
+	$(call fix_specs,$(GCC_LIBDIR)/specs,$(STAGE_LIBDIR)/specs)
 	$(call install_gcc_wrapper,$(STAGE))
 
-$(addprefix test-,divmod float fcmp bitfield objdir uint64 dtneeded kernel-volatile user-volatile kernel-object): test-%: stage
+$(addprefix test-,divmod float fcmp bitfield objdir paths uint64 dtneeded kernel-volatile user-volatile kernel-object): test-%: stage
 	$(TEST_ENV) W='$(BUILDDIR)/test/$*' sh $(HERE)/tests/$*.sh
 
 test-dtneeded: check-runtime

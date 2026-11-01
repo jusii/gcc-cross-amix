@@ -24,7 +24,7 @@ C++ / g++: not complete yet
 `CHANGELOG.md` records the fixes behind that list.
 
 The compiler installed as `m68k-cbm-sysv4-gcc` is a wrapper script, not the
-compiler binary. It repairs GCC's assembly output before assembling it; see
+compiler binary. Every assembly GCC produces is repaired before it is assembled; see
 "What The Wrapper Repairs" below for what it corrects and why bypassing it
 produces silently wrong code.
 
@@ -250,14 +250,24 @@ below):
 
 Rules 7 to 10 are shapes gcc emits at `-m68040`.
 
-Do not invoke `m68k-cbm-sysv4-gcc.real` directly. That is the unwrapped
-compiler, and its output is exactly what the rules above repair. Rules 2 and 6
-fail without any diagnostic, so code built that way assembles, links, runs and
-computes the wrong answer; without rule 11 it is killed on a 68060.
+The rules run on every compile, whatever the route. The real driver,
+`m68k-cbm-sysv4-gcc.real`, does all compiling, and it assembles through an
+assembler wrapper installed where it looks first,
+`lib/gcc-lib/m68k-cbm-sysv4/2.7.2.3/as`, which runs the rules over compiler
+output before handing it to GNU as. So `-c`, the compile half of a link, `.i`
+input from `-E` (ccache, distcc, creduce), `-pipe`, `-save-temps` and `-x c`
+all get them. `-S` writes the repaired assembly, which assembles as it is, with
+`m68k-cbm-sysv4-as` or with `gcc -c`; the rules leave a marker comment
+(`| amix fix_asm`) in it so they are not applied twice. Compiler output is
+recognised by the `.ident "GCC: ..."` line cc1 ends every file with (or the
+marker); hand-written assembly, `.s` or `.S`, is assembled exactly as written.
+`make test-paths` gates all of this.
 
-The rules apply to C the wrapper compiles itself (`-c` and compile-and-link).
-`-S` output is gcc's own, unrepaired, and `.s`/`.S` inputs are assembled as
-written.
+Run the compiler as `m68k-cbm-sysv4-gcc`. The real driver needs the wrapper's
+environment (the sysroot include path first, `GCC_EXEC_PREFIX`), and a
+`gcc -S` from anywhere else, or `-save-temps`' own `.s` file, is unrepaired
+SGS assembly: rules 2 and 6 fail without any diagnostic, so code assembled from
+it computes the wrong answer, and without rule 11 it is killed on a 68060.
 
 ## 68060 Integer Code
 
