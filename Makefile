@@ -101,12 +101,12 @@ HOST_STRIP = strip
 # routine here is freestanding: it builds and links with no AMIX libc.  Built
 # one object per function with -DL<name>, mirroring the stock gcc LIB2FUNCS
 # rule, but through the installed wrapper compiler so the SGS->GNU-as fixups are
-# applied.  (The float->unsigned and XFmode fix routines are omitted because
-# nothing built here needs them.  They also used to be impossible to build at
-# all -- GNU as 2.8.1 rejected the SGS fcmp operand order they emit -- but the
-# compare fixup in fix_asm now handles that, so _fixunsdfsi, _fixunssfsi,
-# _fixunsxfsi, _fixunsxfdi, _fixxfdi and _fixsfdi all compile cleanly should
-# they ever be wanted.)
+# applied.  The float->integer conversions are all here: gcc calls
+# __fixsfdi, __fixxfdi, __fixunsxfdi and __fixunssfsi for float/long double to
+# (unsigned) long long and float to unsigned int, so a library without them
+# fails such links.  (They used to be left out because GNU as 2.8.1 rejected
+# the SGS fcmp operand order they emit; the compare fixup in fix_asm handles
+# that.)
 LIBGCC_A := $(GCC_LIBDIR)/libgcc.a
 LIBGCC2_BUILD_DIR := $(GCC_BUILD)/amix-libgcc
 LIBGCC2_BUILD_CFLAGS = -O2
@@ -114,6 +114,7 @@ LIBGCC2_BUILD_INCLUDES := -I$(GCC_BUILD) -I$(GCC_SRC) -I$(GCC_SRC)/config -I$(GC
 LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 	_lshrdi3 _ashldi3 _ashrdi3 _udiv_w_sdiv _udivmoddi4 _cmpdi2 _ucmpdi2 \
 	_floatdidf _floatdisf _floatdixf _fixunsdfdi _fixdfdi _fixunssfdi \
+	_fixsfdi _fixxfdi _fixunsxfdi _fixunsdfsi _fixunssfsi _fixunsxfsi \
 	__gcc_bcmp _clear_cache _shtab _trampoline
 
 .PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc gcc-full install-gcc-wrapper refresh-gcc-wrapper install-target-ar libgcc install-libgcc env test-random test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir test-dtneeded test-kernel-volatile test-user-volatile test-mul64 test-mul64-run test-scan060 print-vars clean distclean
