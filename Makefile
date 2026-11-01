@@ -117,7 +117,7 @@ LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 	_fixsfdi _fixxfdi _fixunsxfdi _fixunsdfsi _fixunssfsi _fixunsxfsi \
 	__gcc_bcmp _clear_cache _shtab _trampoline
 
-.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc gcc-full install-gcc-wrapper install-target-ar libgcc install-libgcc env stage check test-hello test-uint64 test-divmod test-float test-fcmp test-cmpm test-bitfield test-objdir test-paths test-options test-link test-dtneeded test-kernel-volatile test-user-volatile test-kernel-object test-mul64 test-mul64-run test-scan060 print-vars clean distclean
+.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc gcc-full install-gcc-wrapper install-target-ar libgcc install-libgcc env stage check test-hello test-uint64 test-divmod test-float test-fcmp test-cmpm test-bitfield test-lcomm test-objdir test-paths test-options test-link test-dtneeded test-kernel-volatile test-user-volatile test-kernel-object test-mul64 test-mul64-run test-scan060 print-vars clean distclean
 
 # A recipe that fails part-way never leaves its target behind looking finished.
 .DELETE_ON_ERROR:
@@ -581,7 +581,7 @@ STAGE_CC := $(STAGE)/bin/$(TARGET)-gcc
 TEST_ENV = CC='$(STAGE_CC)' CPUFLAGS='$(CPUFLAGS)' SYSROOT='$(SYSROOT)' \
 	AMIX_SYSROOT='$(SYSROOT)' AMIX_CRT_DIR='$(AMIX_CRT_DIR)' AMIX_ROOT='$(AMIX_ROOT)' \
 	AMIX_KERNEL_CFLAGS='$(AMIX_KERNEL_CFLAGS)' AMIX_USER_CFLAGS='$(AMIX_USER_CFLAGS)'
-CHECK_GATES := divmod float fcmp cmpm bitfield objdir paths options link uint64 dtneeded kernel-volatile \
+CHECK_GATES := divmod float fcmp cmpm bitfield lcomm objdir paths options link uint64 dtneeded kernel-volatile \
 	user-volatile kernel-object mul64 scan060
 
 stage: sysroot-check
@@ -595,7 +595,7 @@ stage: sysroot-check
 	$(call fix_specs,$(GCC_LIBDIR)/specs,$(STAGE_LIBDIR)/specs)
 	$(call install_gcc_wrapper,$(STAGE))
 
-$(addprefix test-,divmod float fcmp cmpm bitfield objdir paths options link uint64 dtneeded kernel-volatile user-volatile kernel-object): test-%: stage
+$(addprefix test-,divmod float fcmp cmpm bitfield lcomm objdir paths options link uint64 dtneeded kernel-volatile user-volatile kernel-object): test-%: stage
 	$(TEST_ENV) W='$(BUILDDIR)/test/$*' sh $(HERE)/tests/$*.sh
 
 test-dtneeded: check-runtime

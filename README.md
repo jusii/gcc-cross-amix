@@ -240,7 +240,10 @@ below):
    character here, so gas scrubbed the rest of any hand-written
    `bfffo %d3{#0:#32},%d2` and lost the instruction.
 5. The three-operand `.lcomm name,size,align` loses its alignment operand,
-   leaving the two-operand form this assembler takes.
+   leaving the two-operand form this assembler takes, which aligns by size
+   (up to 8). An object that asked for more with
+   `__attribute__((aligned(N)))` is laid out in `.bss` at that alignment
+   instead; it used to lose it silently.
 6. `cmp.[bwl]` and `fcmp.[bwlsdxp]` get GNU operand order back. `sgs.h` sets
    `SGS_CMP_ORDER`, so gcc prints the two operands reversed. With a memory
    operand gas rejects it; with two FPU registers it assembles cleanly to a

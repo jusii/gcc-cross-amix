@@ -144,6 +144,24 @@ fix_asm()
 		}egm;
 	' "$1"
 
+	# Local common data: config/m68k/amix.h emits ".lcomm name,size,align"
+	# with the alignment raised to at least 4 (the native assembler's
+	# minimum).  GNU as 2.8.1 takes only ".lcomm name,size" ("Rest of line
+	# ignored" otherwise) and aligns the object by its size: 8 for 8 bytes
+	# and up, 4, 2 or 1 below.  That is what the type needs, except when the
+	# source asked for more with __attribute__((aligned(N))): N above the size
+	# alignment, and above the native minimum of 4, used to be dropped without
+	# a word.  Such an object is laid out in .bss explicitly instead, at the
+	# alignment asked for; every other one keeps the two-operand ".lcomm".
+	# ("make test-lcomm" gates both.)
+	perl -pi -e '
+		if (/^(\s*)\.lcomm\s+([^,\s]+)\s*,\s*(\d+)\s*,\s*(\d+)\s*$/) {
+			my ($i, $n, $size, $al) = ($1, $2, $3, $4);
+			my $nat = $size >= 8 ? 8 : $size >= 4 ? 4 : $size >= 2 ? 2 : 1;
+			$_ = "$i.section\t.bss\n$i.balign\t$al\n$n:\n$i.skip\t$size\n" .
+			     "$i.size\t$n,$size\n$i.previous\n" if $al > 4 && $al > $nat;
+		}
+	' "$1"
 	perl -pi -e 's/^(\s*\.lcomm\s+[^,]+,[^,]+),\d+\s*$/$1\n/' "$1"
 
 	# Restore Motorola/GNU operand order for compares.  config/m68k/sgs.h
