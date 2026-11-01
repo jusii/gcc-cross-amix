@@ -70,6 +70,18 @@ TARGET_RANLIB := $(PREFIX)/bin/$(TARGET)-ranlib
 GCC_LIBDIR := $(PREFIX)/lib/gcc-lib/$(TARGET)/$(GCC_VERSION)
 GCC_REAL := $(PREFIX)/bin/$(TARGET)-gcc.real
 
+# Stamps of the build and install steps (see "Every build and install step").
+STAMPDIR := $(BUILDDIR)/stamps
+BINUTILS_STAMP := $(STAMPDIR)/binutils-built
+BINUTILS_INSTALL_STAMP := $(STAMPDIR)/binutils-installed
+SYSROOT_STAMP := $(STAMPDIR)/sysroot
+GCC_STAMP := $(STAMPDIR)/gcc-built
+GCC_INSTALL_STAMP := $(STAMPDIR)/gcc-installed
+WRAPPER_STAMP := $(STAMPDIR)/wrapper-installed
+TARGET_AR_STAMP := $(STAMPDIR)/target-ar-installed
+LIBGCC_STAMP := $(STAMPDIR)/libgcc-built
+LIBGCC_INSTALL_STAMP := $(STAMPDIR)/libgcc-installed
+
 # Host ar/ranlib the target ar/ranlib wrappers delegate to (see
 # amix-ar-wrapper.sh and install-target-ar).
 HOST_AR = ar
@@ -102,7 +114,7 @@ LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 # A recipe that fails part-way never leaves its target behind looking finished.
 .DELETE_ON_ERROR:
 
-all: install-binutils sysroot install-gcc install-gcc-wrapper install-target-ar install-libgcc env
+all: $(BINUTILS_INSTALL_STAMP) $(SYSROOT_STAMP) $(GCC_INSTALL_STAMP) $(WRAPPER_STAMP) $(TARGET_AR_STAMP) $(LIBGCC_INSTALL_STAMP) env
 
 help:
 	@echo "AMIX cross-toolchain bootstrap"
@@ -254,6 +266,16 @@ disable-binutils-dirs:
 $(BUILDDIR):
 	mkdir -p $@
 
+# Every build and install step is a file target, ending in a stamp under
+# $(STAMPDIR), and depends only on files: nothing is reconfigured or
+# reinstalled unless an input changed, and "make -j" runs the steps in a valid
+# order.  The phony names below (binutils, install-gcc, ...) are aliases for
+# the stamps.  The stamps record what was installed into PREFIX, so after
+# changing PREFIX run "make clean" first.
+
+$(STAMPDIR):
+	mkdir -p $@
+
 $(BINUTILS_BUILD)/config.status: $(BINUTILS_SRC)/.amix-cross-extracted | $(BUILDDIR)
 	mkdir -p $(BINUTILS_BUILD)
 	cd $(BINUTILS_BUILD) && CC="$(HOST_CC)" CFLAGS="$(HOST_CFLAGS)" $(BINUTILS_SRC)/configure \
@@ -262,24 +284,30 @@ $(BINUTILS_BUILD)/config.status: $(BINUTILS_SRC)/.amix-cross-extracted | $(BUILD
 		--disable-nls \
 		$(BINUTILS_CONFIGURE_EXTRA)
 
-binutils: $(BINUTILS_BUILD)/config.status
+$(BINUTILS_STAMP): $(BINUTILS_BUILD)/config.status | $(STAMPDIR)
 	$(MAKE) -C $(BINUTILS_BUILD) -j$(MAKE_JOBS) \
 		CC="$(HOST_CC)" \
 		CFLAGS="$(HOST_CFLAGS)" \
 		MAKEINFO="$(AMIX_MAKEINFO)"
+	touch $@
 
-install-binutils: binutils
+$(BINUTILS_INSTALL_STAMP): $(BINUTILS_STAMP)
 	$(MAKE) -C $(BINUTILS_BUILD) install \
 		CC="$(HOST_CC)" \
 		CFLAGS="$(HOST_CFLAGS)" \
 		MAKEINFO="$(AMIX_MAKEINFO)"
+	touch $@
+
+binutils: $(BINUTILS_STAMP)
+install-binutils: $(BINUTILS_INSTALL_STAMP)
 
 # The stock files copied into the sysroot are made read-only once copied, so
 # a stray link step (for example an ld option that takes the next argument as
 # a map-file name) cannot overwrite libc.so.1 or a header in place.  Directories
 # stay writable so extra libraries can still be added.  Regenerating lifts the
 # write protection first, because cp cannot overwrite a read-only file.
-sysroot:
+# "make sysroot" always copies again; the build itself copies once.
+define copy_sysroot
 	mkdir -p $(SYSROOT)/usr
 	chmod -R u+w $(SYSROOT)/usr
 	test -d "$(AMIX_ROOT)/usr/include"
@@ -306,6 +334,15 @@ sysroot:
 			while read -r f; do chmod a-w "$(SYSROOT)/usr/lib/$$f"; done; \
 	fi
 	@echo "Stock sysroot files are now read-only"
+endef
+
+$(SYSROOT_STAMP): | $(STAMPDIR)
+	$(copy_sysroot)
+	touch $@
+
+sysroot: | $(STAMPDIR)
+	$(copy_sysroot)
+	touch $(SYSROOT_STAMP)
 
 # Refuse to run when the sysroot libc is not an ELF shared object: a clobbered
 # libc.so.1 makes every dynamic link fail with "file format not recognized".
@@ -318,7 +355,7 @@ sysroot-check:
 		*) echo "ERROR: $$f is not an ELF shared object; run make sysroot" >&2; exit 1 ;; \
 	esac
 
-validate-sysroot: sysroot
+validate-sysroot: $(SYSROOT_STAMP)
 	@missing=0; \
 	for f in \
 		usr/include/stdio.h \
@@ -360,7 +397,9 @@ github-safety-check:
 		echo "No AMIX sysroot/runtime files found under $(HERE)."; \
 	fi
 
-$(GCC_BUILD)/config.status: $(GCC_SRC)/.amix-cross-extracted install-binutils sysroot | $(BUILDDIR)
+# gcc's own build needs the installed binutils (configure looks for the GNU
+# assembler and linker under PREFIX), not the sysroot.
+$(GCC_BUILD)/config.status: $(GCC_SRC)/.amix-cross-extracted $(BINUTILS_INSTALL_STAMP) | $(BUILDDIR)
 	mkdir -p $(GCC_BUILD)
 	cd $(GCC_BUILD) && PATH="$(PATH_FOR_BUILD)" CC="$(HOST_CC)" CFLAGS="$(HOST_CFLAGS)" $(GCC_SRC)/configure \
 		--build=$(BUILD) \
@@ -371,7 +410,7 @@ $(GCC_BUILD)/config.status: $(GCC_SRC)/.amix-cross-extracted install-binutils sy
 		--with-gnu-ld \
 		$(GCC_CONFIGURE_EXTRA)
 
-gcc: $(GCC_BUILD)/config.status
+$(GCC_STAMP): $(GCC_BUILD)/config.status | $(STAMPDIR)
 	@if test ! -f "$(GCC_BUILD)/libgcc1.a" && test ! -f "$(GCC_BUILD)/libgcc1.cross"; then \
 		echo "Creating empty target libgcc1.a for compile-only bootstrap"; \
 		cd "$(GCC_BUILD)" && "$(TARGET_AR)" rc libgcc1.a; \
@@ -383,15 +422,22 @@ gcc: $(GCC_BUILD)/config.status
 		CFLAGS="$(HOST_CFLAGS)" \
 		MAKEINFO="$(AMIX_MAKEINFO)" \
 		$(GCC_BUILD_TARGETS)
+	touch $@
 
-install-gcc: gcc
+# Installs the compiler proper: the gcc driver as $(TARGET)-gcc.real, cc1,
+# cpp and the specs.  $(TARGET)-gcc is the wrapper, and only the wrapper step
+# writes it, so no step leaves the bare driver under the wrapper's name.
+$(GCC_INSTALL_STAMP): $(GCC_STAMP)
 	mkdir -p $(PREFIX)/bin $(GCC_LIBDIR)
-	cp $(GCC_BUILD)/xgcc $(PREFIX)/bin/$(TARGET)-gcc
 	cp $(GCC_BUILD)/xgcc $(GCC_REAL)
 	cp $(GCC_BUILD)/cc1 $(GCC_LIBDIR)/cc1
 	cp $(GCC_BUILD)/cccp $(GCC_LIBDIR)/cpp
 	PATH="$(PATH_FOR_BUILD)" $(GCC_BUILD)/xgcc -B$(GCC_BUILD)/ -dumpspecs > $(GCC_LIBDIR)/specs
-	chmod 755 $(PREFIX)/bin/$(TARGET)-gcc $(GCC_REAL) $(GCC_LIBDIR)/cc1 $(GCC_LIBDIR)/cpp
+	chmod 755 $(GCC_REAL) $(GCC_LIBDIR)/cc1 $(GCC_LIBDIR)/cpp
+	touch $@
+
+gcc: $(GCC_STAMP)
+install-gcc: $(GCC_INSTALL_STAMP)
 
 gcc-full: $(GCC_BUILD)/config.status check-runtime
 	PATH="$(PATH_FOR_BUILD)" $(MAKE) -C $(GCC_BUILD) -j$(MAKE_JOBS) \
@@ -407,13 +453,14 @@ define install_gcc_wrapper
 	chmod 755 $(PREFIX)/bin/$(TARGET)-scan060
 endef
 
-install-gcc-wrapper: install-gcc
+$(WRAPPER_STAMP): $(GCC_INSTALL_STAMP) $(HERE)/amix-gcc-wrapper.sh $(HERE)/amix-scan060.py
 	$(install_gcc_wrapper)
+	touch $@
+
+install-gcc-wrapper: $(WRAPPER_STAMP)
 
 # Reinstall only the wrapper script over an already installed compiler.  The
-# test targets use this instead of install-gcc-wrapper, whose install-gcc chain
-# reconfigures gcc and reinstalls binutils (which replaces the ar/ranlib
-# wrappers from install-target-ar) on every run.
+# test targets use this.
 refresh-gcc-wrapper: sysroot-check
 	@test -x "$(GCC_REAL)" || { echo "Missing $(GCC_REAL); run 'make all' first"; exit 1; }
 	$(install_gcc_wrapper)
@@ -422,9 +469,9 @@ refresh-gcc-wrapper: sysroot-check
 # delegate to the host ar/ranlib (see amix-ar-wrapper.sh for the rationale).
 # The shipped ar/ranlib are hardlinked to $(TARGET)/bin/ar etc., so remove the
 # target path first to break the link before writing the wrapper in its place.
-# Self-contained (the wrappers only need the host ar/ranlib); `all' sequences
-# this after install-binutils so it overwrites the binutils-installed ar.
-install-target-ar:
+# It depends on the binutils install, which writes the broken ar/ranlib, so it
+# always runs after it.
+$(TARGET_AR_STAMP): $(BINUTILS_INSTALL_STAMP) $(HERE)/amix-ar-wrapper.sh
 	@hostar="$$(command -v $(HOST_AR) 2>/dev/null)"; \
 	hostranlib="$$(command -v $(HOST_RANLIB) 2>/dev/null)"; \
 	test -n "$$hostar" || { echo "Host '$(HOST_AR)' not found in PATH"; exit 1; }; \
@@ -441,19 +488,15 @@ install-target-ar:
 		chmod 755 "$$dest"; \
 		echo "Installed $$dest (delegates to host $$tool)"; \
 	done
+	touch $@
+
+install-target-ar: $(TARGET_AR_STAMP)
 
 # Build libgcc.a from the freestanding libgcc2 helper routines.  One object per
 # function (-DL<name>), compiled through the installed wrapper compiler so the
-# assembler fixups apply, then archived with the (now working) target ar.
-# libgcc2's soft-arithmetic helpers are freestanding, so this needs no AMIX
-# sysroot/libc; it only requires the wrapper compiler + working ar to be
-# installed already.  `all' sequences install-gcc-wrapper before this; the
-# guards below give a clear error if libgcc is built before that.
-libgcc: install-target-ar
-	@test -f "$(GCC_SRC)/libgcc2.c" || { echo "Missing $(GCC_SRC)/libgcc2.c; run 'make extract'"; exit 1; }
-	@test -f "$(GCC_BUILD)/tm.h" || { echo "Missing $(GCC_BUILD)/tm.h; run 'make install-gcc' first"; exit 1; }
-	@grep -q 'amix gcc wrapper' "$(TARGET_CC)" 2>/dev/null || { \
-		echo "$(TARGET_CC) is not the AMIX wrapper compiler; run 'make install-gcc-wrapper' first"; exit 1; }
+# assembler fixups apply, then archived with the target ar wrapper.  The
+# wrapper puts the sysroot headers first, so the sysroot is copied before.
+$(LIBGCC_STAMP): $(WRAPPER_STAMP) $(TARGET_AR_STAMP) $(SYSROOT_STAMP)
 	@d='$(LIBGCC2_BUILD_DIR)'; rm -rf "$${d:?}"
 	mkdir -p $(LIBGCC2_BUILD_DIR)
 	@set -e; objs=""; \
@@ -467,12 +510,17 @@ libgcc: install-target-ar
 		"$(TARGET_AR)" rc libgcc.a $$objs && \
 		"$(TARGET_RANLIB)" libgcc.a
 	@echo "Built $(LIBGCC2_BUILD_DIR)/libgcc.a"
+	touch $@
 
-install-libgcc: libgcc
+$(LIBGCC_INSTALL_STAMP): $(LIBGCC_STAMP)
 	mkdir -p $(GCC_LIBDIR)
 	cp $(LIBGCC2_BUILD_DIR)/libgcc.a $(LIBGCC_A)
 	"$(TARGET_RANLIB)" $(LIBGCC_A)
 	@echo "Installed $(LIBGCC_A)"
+	touch $@
+
+libgcc: $(LIBGCC_STAMP)
+install-libgcc: $(LIBGCC_INSTALL_STAMP)
 
 env:
 	@mkdir -p $(BUILDDIR)

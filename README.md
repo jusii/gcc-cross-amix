@@ -94,6 +94,11 @@ make PREFIX=/opt/amix-cross all
 If `/opt/amix-cross` is root-owned, create it first and give yourself write
 access, or run the install phases with suitable privileges.
 
+Each build and install step ends in a stamp file under `build/stamps/`, so a
+second `make all` does nothing unless an input changed, and `make -j` is safe.
+The stamps record what went into `PREFIX`: run `make clean` before building
+for a different `PREFIX`.
+
 ## Building AMIX Programs
 
 After `make all` and `. build/env.sh`, a normal C build should work:
