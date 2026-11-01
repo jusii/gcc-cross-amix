@@ -1,0 +1,12 @@
+ld: use the m68kelf emulation for m68k-*-sysv4 (binutils 2.8.1 has no entry for it).
+
+--- a/ld/configure.tgt
++++ b/ld/configure.tgt
+@@ -108,6 +108,7 @@
+ m68*-motorola-sysv*)	targ_emul=delta68 ;;
+ m68*-*-aout)		targ_emul=m68kaout ;;
+ m68*-*-coff)		targ_emul=m68kcoff ;;
++m68k-*-*sysv4*)	targ_emul=m68kelf ;;
+ m68*-*-elf)		targ_emul=m68kelf ;;
+ m68*-*-hpux*)		targ_emul=hp3hpux ;;
+ m68k-*-linux*aout*)	targ_emul=m68klinux

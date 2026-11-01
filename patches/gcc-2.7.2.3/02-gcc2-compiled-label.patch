@@ -1,0 +1,13 @@
+Emit the gcc2_compiled label as plain "gcc2_compiled:"; the SGS spelling "gcc2_compiled%:" is not a label to GNU as.
+
+--- a/config/m68k/m68kv4.h
++++ b/config/m68k/m68kv4.h
+@@ -48,7 +48,7 @@
+ do									\
+   {									\
+     if (write_symbols != DBX_DEBUG)					\
+-      fputs ("gcc2_compiled%:\n", FILE);				\
++      fputs ("gcc2_compiled:\n", FILE);				\
+   }									\
+ while (0)
+ 

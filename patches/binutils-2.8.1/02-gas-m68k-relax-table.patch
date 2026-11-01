@@ -1,0 +1,24 @@
+gas: declare md_relax_table after as.h defines relax_typeS, so a modern host compiler accepts tc-m68k.h.
+
+--- a/gas/config/tc-m68k.h
++++ b/gas/config/tc-m68k.h
+@@ -198,7 +198,7 @@
+ #define TARGET_WORD_SIZE 32
+ #define TARGET_ARCH bfd_arch_m68k
+ 
+-extern struct relax_type md_relax_table[];
++/* amix-cross: declaration removed; struct relax_type is not visible yet. */
+ #define TC_GENERIC_RELAX_TABLE md_relax_table
+ 
+ /* Copied from write.c */
+--- a/gas/write.c
++++ b/gas/write.c
+@@ -22,6 +22,8 @@
+ /* This thing should be set up to do byteordering correctly.  But... */
+ 
+ #include "as.h"
++/* amix-cross: declare m68k relax table after as.h defines relax_typeS. */
++extern relax_typeS md_relax_table[];
+ #include "subsegs.h"
+ #include "obstack.h"
+ #include "output-file.h"

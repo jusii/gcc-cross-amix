@@ -50,8 +50,6 @@ HOST_CFLAGS = -O2 -g -std=gnu89 -fcommon -no-pie
 AMIX_MAKEINFO ?= true
 override MAKEINFO := $(AMIX_MAKEINFO)
 MAKE_JOBS := $(shell nproc 2>/dev/null || echo 1)
-CONFIG_GUESS = /usr/share/misc/config.guess
-CONFIG_SUB = /usr/share/misc/config.sub
 
 CPUFLAGS = -m68020
 AMIX_KERNEL_CPPFLAGS ?= -D_KERNEL -DSVR40 -DSVR4
@@ -147,11 +145,11 @@ help:
 deps-hint:
 	@echo "On LMDE/Debian, install prerequisites with:"
 	@echo "  sudo apt-get update"
-	@echo "  sudo apt-get install build-essential make m4 bison flex texinfo curl wget gzip tar patch file autotools-dev"
+	@echo "  sudo apt-get install build-essential make m4 bison flex texinfo curl wget gzip tar patch file"
 
 deps:
 	sudo apt-get update
-	sudo apt-get install build-essential make m4 bison flex texinfo curl wget gzip tar patch file autotools-dev
+	sudo apt-get install build-essential make m4 bison flex texinfo curl wget gzip tar patch file
 
 print-vars:
 	@echo "TARGET=$(TARGET)"
@@ -204,30 +202,45 @@ extract: $(BINUTILS_SRC)/.amix-cross-extracted $(GCC_SRC)/.amix-cross-extracted
 $(SRCDIR):
 	mkdir -p $@
 
-$(BINUTILS_SRC)/.amix-cross-extracted: $(DISTDIR)/$(BINUTILS_TARBALL) | $(SRCDIR)
+# The changes to the GNU sources are patch files under patches/<package>/,
+# applied in name order to a freshly extracted tree with no fuzz, so a patch
+# that does not apply cleanly stops the build instead of being skipped.
+PATCHDIR := $(HERE)/patches
+BINUTILS_PATCHES := $(sort $(wildcard $(PATCHDIR)/binutils-$(BINUTILS_VERSION)/*.patch))
+GCC_PATCHES := $(sort $(wildcard $(PATCHDIR)/gcc-$(GCC_VERSION)/*.patch))
+
+# binutils 2.8.1 runs config.guess (its configure gets no --build), and its own
+# 1997 copy knows no x86_64 host, so the tree gets the copies pinned in config/
+# (GNU config.guess 2024-07-27 and config.sub 2024-05-27).  gcc is configured
+# with explicit --build, --host and --target, which its own config.sub
+# canonicalizes, so its tree keeps the files it ships with.
+CONFIGDIR := $(HERE)/config
+
+# $(call apply_patches,TREE,PATCHES)
+define apply_patches
+	@for p in $(2); do \
+		echo "patch $$p"; \
+		patch -d '$(1)' -p1 -F0 --forward --batch --no-backup-if-mismatch < "$$p" || exit 1; \
+	done
+endef
+
+$(BINUTILS_SRC)/.amix-cross-extracted: $(DISTDIR)/$(BINUTILS_TARBALL) $(BINUTILS_PATCHES) $(CONFIGDIR)/config.guess $(CONFIGDIR)/config.sub | $(SRCDIR)
 	$(call check_distfile,$(DISTDIR)/$(BINUTILS_TARBALL),$(BINUTILS_TARBALL))
 	@s='$(BINUTILS_SRC)'; b='$(BINUTILS_BUILD)'; rm -rf "$${s:?}" "$${b:?}"
 	cd $(SRCDIR) && tar -xzf $(DISTDIR)/$(BINUTILS_TARBALL)
-	$(MAKE) refresh-config TREE=$(BINUTILS_SRC)
-	$(MAKE) patch-binutils TREE=$(BINUTILS_SRC)
+	$(call apply_patches,$(BINUTILS_SRC),$(BINUTILS_PATCHES))
+	@for f in config.guess config.sub; do \
+		chmod u+w '$(BINUTILS_SRC)'/$$f && cp '$(CONFIGDIR)'/$$f '$(BINUTILS_SRC)'/$$f || exit 1; \
+	done
 	$(MAKE) disable-binutils-dirs TREE=$(BINUTILS_SRC)
 	touch $@
 
-$(GCC_SRC)/.amix-cross-extracted: $(DISTDIR)/$(GCC_TARBALL) | $(SRCDIR)
+$(GCC_SRC)/.amix-cross-extracted: $(DISTDIR)/$(GCC_TARBALL) $(GCC_PATCHES) | $(SRCDIR)
 	$(call check_distfile,$(DISTDIR)/$(GCC_TARBALL),$(GCC_TARBALL))
 	@s='$(GCC_SRC)'; b='$(GCC_BUILD)'; rm -rf "$${s:?}" "$${b:?}"
 	cd $(SRCDIR) && tar -xzf $(DISTDIR)/$(GCC_TARBALL)
-	$(MAKE) refresh-config TREE=$(GCC_SRC)
-	$(MAKE) patch-gcc TREE=$(GCC_SRC)
+	$(call apply_patches,$(GCC_SRC),$(GCC_PATCHES))
 	touch $@
-
-refresh-config:
-	@test -n "$(TREE)" || { echo "TREE is required"; exit 1; }
-	@test -f "$(CONFIG_GUESS)" || { echo "Missing $(CONFIG_GUESS). Install autotools-dev or set CONFIG_GUESS=/path/to/config.guess"; exit 1; }
-	@test -f "$(CONFIG_SUB)" || { echo "Missing $(CONFIG_SUB). Install autotools-dev or set CONFIG_SUB=/path/to/config.sub"; exit 1; }
-	@find "$(TREE)" -name config.guess -exec cp "$(CONFIG_GUESS)" {} \;
-	@find "$(TREE)" -name config.sub -exec cp "$(CONFIG_SUB)" {} \;
-	@echo "Refreshed config.guess/config.sub under $(TREE)"
 
 disable-binutils-dirs:
 	@test -n "$(TREE)" || { echo "TREE is required"; exit 1; }
@@ -237,57 +250,6 @@ disable-binutils-dirs:
 			echo "Disabled binutils subdir $$dir"; \
 		fi; \
 	done
-
-patch-binutils:
-	@test -n "$(TREE)" || { echo "TREE is required"; exit 1; }
-	@if test -f "$(TREE)/ld/configure.tgt" && ! grep -q 'm68k-\*-\*sysv4\*' "$(TREE)/ld/configure.tgt"; then \
-		sed -i '/m68\*-\*-elf)/i m68k-*-*sysv4*)	targ_emul=m68kelf ;;' "$(TREE)/ld/configure.tgt"; \
-		echo "Patched ld/configure.tgt for m68k-*-sysv4"; \
-	fi
-	@if test -f "$(TREE)/bfd/config.bfd" && ! grep -q 'm68k-\*-\*sysv4\*' "$(TREE)/bfd/config.bfd"; then \
-		sed -i '/m68\*-\*-elf)/i m68k-*-*sysv4*)	targ_defvec=bfd_elf32_m68k_vec ;;' "$(TREE)/bfd/config.bfd"; \
-		echo "Patched bfd/config.bfd for m68k-*-sysv4"; \
-	fi
-	@if grep -q 'amix-cross: include write.h before targ-cpu.h' "$(TREE)/gas/config/obj-elf.h"; then \
-		sed -i '/amix-cross: include write.h before targ-cpu.h/d; /#include "write.h"/d' "$(TREE)/gas/config/obj-elf.h"; \
-	fi
-	@if grep -q '^extern struct relax_type md_relax_table\[\];' "$(TREE)/gas/config/tc-m68k.h"; then \
-		sed -i 's/^extern struct relax_type md_relax_table\[\];/\/\* amix-cross: declaration removed; struct relax_type is not visible yet. \*\//' "$(TREE)/gas/config/tc-m68k.h"; \
-		echo "Patched gas/config/tc-m68k.h for modern host GCC"; \
-	fi
-	@if ! grep -q 'amix-cross: declare m68k relax table after as.h' "$(TREE)/gas/write.c"; then \
-		sed -i '/#include "as.h"/a /* amix-cross: declare m68k relax table after as.h defines relax_typeS. */\
-extern relax_typeS md_relax_table[];' "$(TREE)/gas/write.c"; \
-		echo "Patched gas/write.c for m68k relax table declaration"; \
-	fi
-
-patch-gcc:
-	@test -n "$(TREE)" || { echo "TREE is required"; exit 1; }
-	@if ! grep -q 'amix-cross: modern libc strerror' "$(TREE)/cccp.c"; then \
-		sed -i '/#include "config.h"/a /* amix-cross: modern libc strerror fallback. */\
-#include <string.h>' "$(TREE)/cccp.c"; \
-		sed -i 's/if (errno < sys_nerr)/if (1)/' "$(TREE)/cccp.c"; \
-		sed -i 's/return sys_errlist\[errno\];/return strerror (errno);/' "$(TREE)/cccp.c"; \
-		echo "Patched gcc cccp.c for modern libc strerror"; \
-	fi
-	@if ! grep -q 'amix-cross: modern libc strerror' "$(TREE)/gcc.c"; then \
-		sed -i '/#include "config.h"/a /* amix-cross: modern libc strerror fallback. */\
-#include <string.h>' "$(TREE)/gcc.c"; \
-		sed -i 's/if (e < sys_nerr)/if (1)/g; s/if (errno < sys_nerr)/if (1)/g' "$(TREE)/gcc.c"; \
-		sed -i 's/sys_errlist\[e\]/strerror (e)/g; s/sys_errlist\[errno\]/strerror (errno)/g' "$(TREE)/gcc.c"; \
-		echo "Patched gcc gcc.c for modern libc strerror"; \
-	fi
-	@if grep -R -q 'gcc2_compiled%' "$(TREE)"; then \
-		find "$(TREE)" -type f -exec sed -i 's/gcc2_compiled%/gcc2_compiled/g' {} \; ; \
-		echo "Patched GCC sources for GNU as gcc2_compiled symbol syntax"; \
-	fi
-	@if grep -R -q 'lcomm.*,%u,%u' "$(TREE)"; then \
-		find "$(TREE)" -type f -exec perl -0pi -e 's/((?:\\\\t|\t)?\\.lcomm[^"\\n]*,%[du]),%[du](\\\\n")/$$1$$2/g' {} \; ; \
-		echo "Patched GCC .lcomm output for binutils 2.8.1"; \
-	fi
-	@find "$(TREE)/config" -type f -exec perl -0pi -e 's/fprintf\s*\(\s*\(FILE\)\s*,\s*",%([ud]),%[ud]\\n"\s*,\s*\(?SIZE\)?\s*,\s*\(?ROUNDED\)?\s*\)/fprintf ((FILE), ",%\1\\n", (SIZE))/g; s/fprintf\s*\(\s*\(FILE\)\s*,\s*",%([ud]),%[ud]\\n"\s*,\s*\(?SIZE\)?\s*,\s*\(?ALIGNMENT\)?\s*\/\s*BITS_PER_UNIT\s*\)/fprintf ((FILE), ",%\1\\n", (SIZE))/g; s/fprintf\s*\(\s*\(FILE\)\s*,\s*",%([ud]),%[ud]\\n"\s*,\s*\(?SIZE\)?\s*,\s*\(?ALIGN\)?\s*\/\s*BITS_PER_UNIT\s*\)/fprintf ((FILE), ",%\1\\n", (SIZE))/g; s/fprintf\s*\(\s*\(FILE\)\s*,\s*",%([ud]),%[ud]\\n"\s*,\s*\(?SIZE\)?\s*,\s*\(?ALIGNMENT\)?\s*\)/fprintf ((FILE), ",%\1\\n", (SIZE))/g; s/fprintf\s*\(\s*\(FILE\)\s*,\s*",%([ud]),%[ud]\\n"\s*,\s*\(?SIZE\)?\s*,\s*\(?ALIGN\)?\s*\)/fprintf ((FILE), ",%\1\\n", (SIZE))/g' {} \;
-	@if test -f "$(TREE)/c-parse.c"; then touch "$(TREE)/c-parse.c"; fi
-	@if test -f "$(TREE)/c-gperf.h"; then touch "$(TREE)/c-gperf.h"; fi
 
 $(BUILDDIR):
 	mkdir -p $@

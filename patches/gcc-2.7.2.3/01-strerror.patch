@@ -1,0 +1,60 @@
+gcc driver and cpp: use strerror(); modern C libraries no longer export sys_nerr/sys_errlist.
+
+--- a/cccp.c
++++ b/cccp.c
+@@ -38,6 +38,8 @@
+    for the sake of machines with limited C compilers.  */
+ #ifndef EMACS
+ #include "config.h"
++/* amix-cross: modern libc strerror fallback. */
++#include <string.h>
+ #endif /* not EMACS */
+ 
+ #ifndef STANDARD_INCLUDE_DIR
+--- a/gcc.c
++++ b/gcc.c
+@@ -46,6 +46,8 @@
+ #endif
+ 
+ #include "config.h"
++/* amix-cross: modern libc strerror fallback. */
++#include <string.h>
+ #include "obstack.h"
+ #ifdef __STDC__
+ #include <stdarg.h>
+@@ -1026,7 +1028,7 @@
+     return "";
+ 
+   if (e > 0 && e < sys_nerr)
+-    return sys_errlist[e];
++    return strerror (e);
+ 
+   sprintf (buffer, "Unknown error %d", e);
+   return buffer;
+@@ -4734,7 +4736,7 @@
+ {
+   char *s;
+ 
+-  if (errno < sys_nerr)
++  if (1)
+     s = concat ("%s: ", my_strerror( errno ));
+   else
+     s = "cannot open `%s'";
+@@ -4747,7 +4749,7 @@
+ {
+   char *s;
+ 
+-  if (errno < sys_nerr)
++  if (1)
+     s = concat ("%s: ", my_strerror( errno ));
+   else
+     s = "cannot open `%s'";
+@@ -4760,7 +4762,7 @@
+ {
+   char *s;
+ 
+-  if (errno < sys_nerr)
++  if (1)
+     s = concat ("installation problem, cannot exec `%s': ",
+ 		my_strerror (errno));
+   else

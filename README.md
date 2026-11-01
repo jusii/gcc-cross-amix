@@ -74,8 +74,10 @@ make validate-sysroot AMIX_ROOT=$AMIX_ROOT
 make test-hello AMIX_ROOT=$AMIX_ROOT
 ```
 
-The Makefile refreshes old `config.guess` and `config.sub` files from
-`/usr/share/misc`, so install `autotools-dev` on LMDE before building.
+The changes this toolchain makes to the GNU sources are patch files under
+`patches/`, applied to a freshly extracted tree; a patch that does not apply
+cleanly stops the build. binutils gets the `config.guess` and `config.sub`
+pinned in `config/`, since its own 1997 copies know no x86_64 host.
 
 The default install prefix is:
 
