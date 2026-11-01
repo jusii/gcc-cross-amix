@@ -34,7 +34,11 @@ BINUTILS_DISABLE_DIRS =
 GCC_BUILD_TARGETS = xgcc cc1 cccp stmp-int-hdrs
 
 HERE := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-AMIX_ROOT ?= $(abspath $(HERE)/../..)
+# The AMIX tree the sysroot is made from (usr/include, usr/lib, usr/ccs,
+# usr/sys): a checkout of amigaux/amix-system or a copy of an AMIX
+# installation.  There is no default; the steps that read it say so.
+AMIX_ROOT ?=
+need_amix_root = @test -n "$(AMIX_ROOT)" || { echo "AMIX_ROOT is not set: point it at an AMIX tree (usr/include, usr/lib, usr/ccs), e.g. a checkout of amigaux/amix-system" >&2; exit 1; }
 
 DISTDIR = $(HERE)/distfiles
 SRCDIR = $(HERE)/src
@@ -327,7 +331,7 @@ install-binutils: $(BINUTILS_INSTALL_STAMP)
 define copy_sysroot
 	mkdir -p $(SYSROOT)/usr
 	chmod -R u+w $(SYSROOT)/usr
-	test -d "$(AMIX_ROOT)/usr/include"
+	test -n "$(AMIX_ROOT)" && test -d "$(AMIX_ROOT)/usr/include"
 	cp -R "$(AMIX_ROOT)/usr/include" "$(SYSROOT)/usr/"
 	if test -d "$(AMIX_ROOT)/usr/sys"; then cp -R "$(AMIX_ROOT)/usr/sys" "$(SYSROOT)/usr/"; fi
 	if test -d "$(AMIX_ROOT)/usr/ccs"; then cp -R "$(AMIX_ROOT)/usr/ccs" "$(SYSROOT)/usr/"; fi
@@ -354,10 +358,12 @@ define copy_sysroot
 endef
 
 $(SYSROOT_STAMP): | $(STAMPDIR)
+	$(need_amix_root)
 	$(copy_sysroot)
 	touch $@
 
 sysroot: | $(STAMPDIR)
+	$(need_amix_root)
 	$(copy_sysroot)
 	touch $(SYSROOT_STAMP)
 
@@ -402,17 +408,16 @@ check-runtime: validate-sysroot
 	done; \
 	test $$missing -eq 0
 
+# AMIX system files belong in the sysroot, never in this repository: fail if
+# git tracks (or is about to commit) anything that looks like one.
 github-safety-check:
-	@if test -d "$(HERE)/../../usr"; then \
-		echo "WARNING: $(HERE)/../../usr exists. Do not publish this AMIX usr tree."; \
-		echo "Create the public repository from tools/amix-cross only, or keep /usr ignored."; \
-	fi
-	@if find "$(HERE)" \( -path '*/sysroot/*' -o -path '*/usr/include/*' -o -path '*/usr/lib/*' -o -name 'libc.so.1' -o -name 'ld.so.1' -o -name 'crt*.o' \) -print -quit | grep . >/dev/null; then \
-		echo "WARNING: AMIX sysroot/runtime-looking files found under $(HERE)."; \
-		echo "Remove them before publishing, or keep them outside the repo."; \
-	else \
-		echo "No AMIX sysroot/runtime files found under $(HERE)."; \
-	fi
+	@files=$$(cd "$(HERE)" && { git ls-files 2>/dev/null; git diff --cached --name-only 2>/dev/null; } | \
+		grep -E '(^|/)(sysroot|usr/include|usr/lib|usr/ccs)/|(^|/)(libc\.so\.1|ld\.so\.1|crt[0-9a-z]*\.o|values-X[act]\.o)$$' | sort -u); \
+	if test -n "$$files"; then \
+		echo "AMIX system files are tracked by git in $(HERE):" >&2; \
+		printf '  %s\n' $$files >&2; exit 1; \
+	fi; \
+	echo "ok   no AMIX system file is tracked in $(HERE)"
 
 # gcc's own build needs the installed binutils (configure looks for the GNU
 # assembler and linker under PREFIX), not the sysroot.
@@ -548,6 +553,7 @@ libgcc: $(LIBGCC_STAMP)
 install-libgcc: $(LIBGCC_INSTALL_STAMP)
 
 env:
+	$(need_amix_root)
 	@mkdir -p $(BUILDDIR)
 	@printf '%s\n' '# Source this file before cross-compiling for AMIX.' > $(BUILDDIR)/env.sh
 	@printf '%s\n' 'export AMIX_CROSS_TARGET="$(TARGET)"' >> $(BUILDDIR)/env.sh

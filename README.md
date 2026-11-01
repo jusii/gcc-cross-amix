@@ -28,13 +28,17 @@ compiler binary. Every assembly GCC produces is repaired before it is assembled;
 "What The Wrapper Repairs" below for what it corrects and why bypassing it
 produces silently wrong code.
 
-## Redistribution Notice
+## The AMIX Tree
 
-This repository must not include AMIX headers, libraries, startup objects, or
-full system trees. Each user must provide their own AMIX sysroot from a
-licensed AMIX installation.
+The toolchain builds against an AMIX tree -- headers, libraries, startup
+objects and, for kernel work, `usr/sys` -- which is not part of this
+repository. Point `AMIX_ROOT` at one: a checkout of
+[amigaux/amix-system](https://github.com/amigaux/amix-system), which publishes
+the stock AMIX 2.1 system files, or a copy of your own AMIX installation.
+`make sysroot` copies it into the install prefix.
 
-Do not commit files such as:
+Keep the AMIX files out of this repository (`make github-safety-check` fails
+if git tracks any), for example:
 
 ```text
 usr/include/*
@@ -45,12 +49,13 @@ usr/ccs/lib/mcrt*.o
 usr/ccs/lib/pcrt*.o
 ```
 
-## Quick Start On LMDE
+## Quick Start (Debian, Ubuntu)
 
-First copy or mount your AMIX tree on Linux. The examples below assume:
+The examples below assume an AMIX tree in `$HOME/src/amix-system`:
 
 ```sh
-AMIX_ROOT=/media/sf_Storage/usr-amix
+git clone https://github.com/amigaux/amix-system $HOME/src/amix-system
+AMIX_ROOT=$HOME/src/amix-system
 ```
 
 The tree should contain at least:
@@ -464,7 +469,7 @@ TARGET=m68k-cbm-sysv4
 BINUTILS_VERSION=2.8.1
 GCC_VERSION=2.7.2.3
 CPUFLAGS=-m68020
-AMIX_ROOT=/path/to/usr-amix
+AMIX_ROOT=/path/to/amix-system
 SYSROOT=$HOME/opt/amix-cross/m68k-cbm-sysv4/sysroot
 AMIX_CRT_DIR=$SYSROOT/usr/ccs/lib
 ```
@@ -495,10 +500,9 @@ code that must run on a 68060     CPUFLAGS=-m68060, or -m68040 with rule 11
 Because the emitted opcodes differ, do not mix objects built with different
 `CPUFLAGS` in one link.
 
-`AMIX_ROOT` is where your own AMIX tree is mounted or copied. Always pass it
-explicitly: its Makefile default points two directories above the repository, a
-leftover from when this toolchain lived inside a larger tree, and in a
-standalone clone that path means nothing.
+`AMIX_ROOT` is the AMIX tree (see "The AMIX Tree"). It has no default: the
+steps that read it -- `make sysroot`, `make env` and so `make all`, and the
+kernel gates -- stop with a message when it is not set.
 
 `AMIX_SYSROOT` and `AMIX_CRT_DIR` are read by the installed wrapper at run time.
 `AMIX_SYSROOT` overrides the prefix-relative default `$PREFIX/$TARGET/sysroot`,
@@ -521,7 +525,7 @@ Linux-side linking needs the AMIX startup objects in addition to `libc.so.1`
 and `ld.so.1`. The `sysroot` target copies `usr/include`, `usr/lib`,
 `usr/sys`, and `usr/ccs` from `AMIX_ROOT` when present.
 
-Look on AMIX in likely locations:
+On an AMIX installation they are here:
 
 ```sh
 ls -l /usr/ccs/lib /usr/lib /lib
@@ -539,13 +543,13 @@ crtn.o
 If they live outside the sysroot default, pass that directory:
 
 ```sh
-make check-runtime AMIX_ROOT=/media/sf_Storage/usr-amix AMIX_CRT_DIR=/media/sf_Storage/usr-amix/usr/ccs/lib
+make check-runtime AMIX_ROOT=$AMIX_ROOT AMIX_CRT_DIR=$AMIX_ROOT/usr/ccs/lib
 ```
 
 Once `ld` and those startup files are available, try:
 
 ```sh
-make test-hello AMIX_ROOT=/media/sf_Storage/usr-amix
+make test-hello AMIX_ROOT=$AMIX_ROOT
 ```
 
 The installed wrapper supports the normal C path once the sysroot contains
@@ -563,7 +567,7 @@ Build and test a C hello binary on AMIX.
 `AMIX_KERNEL_CFLAGS` and checks them against the native objects:
 
 ```sh
-make AMIX_ROOT=$HOME/src/usr-amix test-kernel-object
+make AMIX_ROOT=$AMIX_ROOT test-kernel-object
 ```
 
 ### Kernel CFLAGS: -traditional and volatile
