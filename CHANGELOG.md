@@ -1,6 +1,17 @@
 # Changelog
 
-## 2026-10-31 â README and CHANGELOG wording (c97cf2f)
+## 2026-11-01 — every compile path gets fix_asm; the review fixes (7e7af94..56f8545)
+
+Every compile goes through gcc.real and an assembler wrapper that runs fix_asm on compiler output, so `.i` input,
+`-S` then `-c`, `-pipe`, `-save-temps` and `-x c` no longer bypass the repairs. Linker options are an explicit list;
+everything else goes to the compiler. gcc is built as 32-bit code to match its i686 configuration (cpp's `#if`
+arithmetic is 32-bit). Links search usr/lib then usr/ccs/lib, use libc's static part and values-X?.o, and leave no
+temporary files. fix_asm rules 5 and 6 extended; rules 2–11 in one perl run. New opt-in `-m68060`. libgcc gains the
+missing float conversions. Pinned distfile sha256, patches/, pinned config.guess/sub, a stamp-file make graph,
+stripped path-free binaries, a required AMIX_ROOT; gates as scripts under tests/, run against a staged copy.
+LICENSING-STATUS.md maps authorship. Kernel output byte-identical (dlm core, loader, modules, the k30 cut, libgcc).
+
+## 2026-10-31 — README and CHANGELOG wording (c97cf2f)
 
 Internal review ids and a hash from another repository's private branch removed; no change to the toolchain.
 
