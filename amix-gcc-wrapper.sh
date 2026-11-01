@@ -70,7 +70,8 @@ fix_asm()
 	# with objdump: the fixed form disassembles as "divsll"/"divull",
 	# the broken one as "divsl"/"divul".  (Affects every variable-divisor
 	# divide/modulo the compiler emits, at both -O0 and -O.)
-	perl -pi -e 's/^(\s*)tdivs(?=[.\s])/${1}divsl/; s/^(\s*)tdivu(?=[.\s])/${1}divul/;' "$1"
+	local p=
+	p+='s/^([ \t]*)tdivs(?=[.\s])/${1}divsl/gm; s/^([ \t]*)tdivu(?=[.\s])/${1}divul/gm;'
 
 	# gcc emits single-precision FP multiply/divide as the 68881/68882
 	# "fsglmul"/"fsgldiv" (single-precision ROUNDING, extended-precision
@@ -102,7 +103,7 @@ fix_asm()
 	#
 	# Note the frame pointer prints as "%fp" with no digit, so the
 	# "%fp[0-7]" match cannot mistake "12(%fp)" for an FPU register.
-	perl -pi -e 's{^(\s*)fsgl(div|mul)\.s(\s+%fp[0-7]\s*,\s*%fp[0-7])(\s*)$}{$1fsgl$2.x$3$4}' "$1"
+	p+='s{^([ \t]*)fsgl(div|mul)\.s([ \t]+%fp[0-7][ \t]*,[ \t]*%fp[0-7])([ \t]*)$}{$1fsgl$2.x$3$4}gm;'
 
 	# Bit-field operand: gcc 2.7.2.3 copies an inline "asm" template into its
 	# output verbatim, so hand-written m68k assembly that spells the bit-field
@@ -136,13 +137,13 @@ fix_asm()
 	# way.  Verify with objdump: offset and width must survive as bits 10:6 and
 	# 4:0 of the extension word with the Do/Dw register-select bits clear (a
 	# width of 32 encodes as 0).  ("make test-bitfield" gates this.)
-	perl -pi -e '
-		s{^(\s*bf(?:chg|clr|exts|extu|ffo|ins|set|tst)\s[^\n]*?\{)([^\n{}]*)(\})}{
+	p+='
+		s{^([ \t]*bf(?:chg|clr|exts|extu|ffo|ins|set|tst)[ \t][^\n]*?\{)([^\n{}]*)(\})}{
 			my ($head, $field, $tail) = ($1, $2, $3);
 			$field =~ s/[#]/&/g;
 			"$head$field$tail";
 		}egm;
-	' "$1"
+	'
 
 	# Local common data: config/m68k/amix.h emits ".lcomm name,size,align"
 	# with the alignment raised to at least 4 (the native assembler's
@@ -154,15 +155,16 @@ fix_asm()
 	# a word.  Such an object is laid out in .bss explicitly instead, at the
 	# alignment asked for; every other one keeps the two-operand ".lcomm".
 	# ("make test-lcomm" gates both.)
-	perl -pi -e '
-		if (/^(\s*)\.lcomm\s+([^,\s]+)\s*,\s*(\d+)\s*,\s*(\d+)\s*$/) {
+	p+='
+		s{^([ \t]*)\.lcomm[ \t]+([^,\s]+)[ \t]*,[ \t]*(\d+)[ \t]*,[ \t]*(\d+)[ \t]*$}{
 			my ($i, $n, $size, $al) = ($1, $2, $3, $4);
 			my $nat = $size >= 8 ? 8 : $size >= 4 ? 4 : $size >= 2 ? 2 : 1;
-			$_ = "$i.section\t.bss\n$i.balign\t$al\n$n:\n$i.skip\t$size\n" .
-			     "$i.size\t$n,$size\n$i.previous\n" if $al > 4 && $al > $nat;
-		}
-	' "$1"
-	perl -pi -e 's/^(\s*\.lcomm\s+[^,]+,[^,]+),\d+\s*$/$1\n/' "$1"
+			$al > 4 && $al > $nat
+			    ? "$i.section\t.bss\n$i.balign\t$al\n$n:\n$i.skip\t$size\n$i.size\t$n,$size\n$i.previous"
+			    : $&;
+		}gme;
+		s/^([ \t]*\.lcomm[ \t]+[^,\n]+,[^,\n]+),\d+[ \t]*$/$1/gm;
+	'
 
 	# Restore Motorola/GNU operand order for compares.  config/m68k/sgs.h
 	# defines SGS_CMP_ORDER ("Takes cmp operands in reverse order"), so
@@ -205,7 +207,7 @@ fix_asm()
 	# or "cmpi.l" as written -- in the same SGS operand order -- so those are
 	# swapped too; otherwise "cmpm.l (%a1)+,(%a0)+" compared the other way
 	# round from "cmp.l (%a1)+,(%a0)+".  ("make test-cmpm" gates this.)
-	perl -0pi -e '
+	p+='
 		# Rule 6 must not run twice on one file (a second swap undoes the
 		# first); fix_asm marks a file it has repaired, below.  Every other
 		# rule leaves nothing it would match again.
@@ -247,12 +249,12 @@ fix_asm()
 		# in prologues) is fine; only the sized control-register form is not.
 		s{^(\s*)fmovm(\.[a-z])}{$1fmovem$2}gm;
 		s{^(\s*mov)(\s+&\d+,%d[0-7]\s*)$}{$1.l$2}gm;
-	' "$1"
+	'
 
 	# The marker: a comment line, so the object is the same with or without
 	# it.  A file carrying it is in GNU as syntax already -- "-S" output, say,
 	# fed back to the compiler -- and rule 6 above leaves it alone.
-	grep -q '^| amix fix_asm$' "$1" || printf '%s\n' '| amix fix_asm' >> "$1"
+	p+='$_ .= "| amix fix_asm\n" unless /^\| amix fix_asm$/m;'
 
 	# 68060: expand the 32x32->64 multiply.  gcc 2.7.2.3 emits the 64-bit-
 	# product "muls.l/mulu.l <ea>,%dH:%dL" (MULS.L/MULU.L <ea>,Dh:Dl, ext-word
@@ -282,9 +284,8 @@ fix_asm()
 	# byte-identical either way.  ("make test-mul64" gates the encoding and
 	# "make test-mul64-run" the results on a 68060 and a 68020 under qemu.)
 	local mul64="${amix_mul64_mode:-${AMIX_MUL64:-expand}}"
-	test "$mul64" = keep && return 0
-	perl -pi -e '
-		if (/^(\s*)mul([su])\.l\s+(.+?),(%d[0-7]):(%d[0-7])\s*$/) {
+	test "$mul64" = keep || p+='
+		s{^([ \t]*)mul([su])\.l[ \t]+(.+?),(%d[0-7]):(%d[0-7])[ \t]*$}{
 			my ($i, $sg, $ea, $dh, $dl) = ($1, $2, $3, $4, $5);
 			# frame, from %sp: 0..16 %d0-%d4, 20 CCR then result flags,
 			# 24 a = %dL then high word, 28 b = <ea> then low word
@@ -313,9 +314,13 @@ fix_asm()
 			  "mov.l (%sp)+,%d3", "mov.l (%sp)+,%d4",
 			  "mov.l 4(%sp),$dh", "mov.l 8(%sp),$dl", "tst.l (%sp)",
 			  "lea 12(%sp),%sp");
-			$_ = join("", map { "$i$_\n" } @o);
-		}
-	' "$1"
+			join("\n", map { "$i$_" } @o);
+		}gme;
+	'
+
+	# One perl run applies rules 2 to 11 in order, over the whole file.
+	perl -0777 -pi -e "$p" "$1"
+	test "$mul64" = keep && return 0
 	# Fail closed on any 64-bit form still present: an unexpanded multiply,
 	# a 64-bit-dividend divide (the 32-bit remainder divide is spelled
 	# divsl.l/divul.l by now), or an SGS tdivs/tdivu the rule above missed.
