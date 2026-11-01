@@ -1,8 +1,7 @@
 # Bootstrap an AMIX cross toolchain on Linux.
 #
-# The first working milestone is C -> AMIX m68k ELF relocatable objects.
-# The real goal is a sysrooted toolchain that can link AMIX executables with
-# GNU ld and, after C links cleanly, build the C++ front end as well.
+# A C compiler (GCC 2.7.2.3) and GNU binutils 2.8.1 for m68k-cbm-sysv4: AMIX
+# kernel objects, drivers and C programs, linked against an AMIX sysroot.
 
 SHELL := /bin/sh
 
@@ -33,7 +32,6 @@ BINUTILS_DISABLE_DIRS =
 # only serve a header the AMIX tree does not have.  (float.h needs a run of
 # enquire on the target and is the sysroot's.)
 GCC_BUILD_TARGETS = xgcc cc1 cccp stmp-int-hdrs
-GCC_FULL_BUILD_TARGETS = LANGUAGES="c c++" all
 
 HERE := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 AMIX_ROOT ?= $(abspath $(HERE)/../..)
@@ -122,7 +120,7 @@ LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 	_fixsfdi _fixxfdi _fixunsxfdi _fixunsdfsi _fixunssfsi _fixunsxfsi \
 	__gcc_bcmp _clear_cache _shtab _trampoline
 
-.PHONY: all help deps-hint download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc gcc-full install-gcc-wrapper install-target-ar libgcc install-libgcc env stage check test-hello test-uint64 test-divmod test-float test-fcmp test-cmpm test-bitfield test-lcomm test-objdir test-paths test-options test-link test-dtneeded test-kernel-volatile test-user-volatile test-kernel-object test-mul64 test-mul64-run test-scan060 print-vars clean distclean
+.PHONY: all help deps-hint download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc install-gcc-wrapper install-target-ar libgcc install-libgcc env stage check test-hello test-uint64 test-divmod test-float test-fcmp test-cmpm test-bitfield test-lcomm test-objdir test-paths test-options test-link test-dtneeded test-kernel-volatile test-user-volatile test-kernel-object test-mul64 test-mul64-run test-scan060 print-vars clean distclean
 
 # A recipe that fails part-way never leaves its target behind looking finished.
 .DELETE_ON_ERROR:
@@ -139,7 +137,6 @@ help:
 	@echo "  make validate-sysroot Check required user-supplied AMIX runtime files"
 	@echo "  make check-runtime   Verify AMIX crt objects needed for Linux-side linking"
 	@echo "  make github-safety-check Warn if redistributable repo contains AMIX files"
-	@echo "  make gcc-full        Attempt full GCC C/C++ build after ld/runtime are ready"
 	@echo "  make install-libgcc  Build and install the target libgcc.a (also part of 'all')"
 	@echo "  make test-hello      Try to build and link a runnable AMIX user program"
 	@echo "  make env             Write env.sh only"
@@ -463,13 +460,6 @@ $(GCC_INSTALL_STAMP): $(GCC_STAMP)
 
 gcc: $(GCC_STAMP)
 install-gcc: $(GCC_INSTALL_STAMP)
-
-gcc-full: $(GCC_BUILD)/config.status check-runtime
-	PATH="$(PATH_FOR_BUILD)" $(MAKE) -C $(GCC_BUILD) -j$(MAKE_JOBS) \
-		CC="$(HOST_CC)" \
-		CFLAGS="$(HOST_CFLAGS) $(HOST_PATH_CFLAGS)" \
-		MAKEINFO="$(AMIX_MAKEINFO)" \
-		$(GCC_FULL_BUILD_TARGETS)
 
 # The specs, corrected: the assembler gets the -m680x0 flags, so the assembler
 # wrapper assembles for the CPU the code was compiled for.

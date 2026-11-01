@@ -18,7 +18,7 @@ Kernel and driver objects: work
 Code generation: -m68020, -m68030, -m68040, -m68060
 68060-safe integer code: by default (no 64-bit multiply or divide)
 Preprocessing (-E): works, so autoconf configure scripts can use it
-C++ / g++: not complete yet
+C++: not built (C only)
 ```
 
 `CHANGELOG.md` records the fixes behind that list.
@@ -555,7 +555,7 @@ The installed wrapper supports the normal C path once the sysroot contains
 m68k-cbm-sysv4-gcc hello.c -o hello
 ```
 
-Build and test a C hello binary on AMIX before working on `gcc-full` / C++.
+Build and test a C hello binary on AMIX.
 
 ## Kernel And Driver Objects
 
