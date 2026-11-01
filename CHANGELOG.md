@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-01 — the assembler wrapper keeps option values with their options (b39e6c0)
+
+`-Wa,--defsym,SYM=1` and `-Wa,-I,dir` failed with "amix as wrapper: more than one input" because the assembler wrapper treated only `-o` as taking a separate value. It now reads options the way GNU as 2.8.1 does (getopt_long_only over gas/as.c and the m68k ELF table in tc-m68k.c): the short options `-I -o -A -m -Q` take a value attached or as the next word, `-a` only attached, and the long options `--defsym --emulation --itbl` as `=val` or the next word, with one dash or abbreviated. Two real inputs are still refused. New gate `make test-asopts`. 164 kernel, port and libgcc objects are byte-identical before and after.
+
 ## 2026-11-01 — every compile path gets fix_asm; the review fixes (7e7af94..56f8545)
 
 Every compile goes through gcc.real and an assembler wrapper that runs fix_asm on compiler output, so `.i` input,
