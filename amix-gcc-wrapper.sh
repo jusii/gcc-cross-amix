@@ -381,13 +381,24 @@ export AMIX_MUL64="$amix_mul64_mode"
 has_c=no
 has_S=no
 has_E=no
+has_query=no
 for arg in "$@"; do
 	case "$arg" in
 		-c) has_c=yes ;;
 		-S) has_S=yes ;;
-		-E) has_E=yes ;;
+		# -M and -MM print dependencies and stop after the preprocessor
+		-E|-M|-MM) has_E=yes ;;
+		-dumpversion|-dumpmachine|-dumpspecs|-print-libgcc-file-name|-print-file-name=*|-print-prog-name=*|--help)
+			has_query=yes ;;
 	esac
 done
+
+# Questions to the driver (-dumpversion, -print-file-name=..., ...) are
+# answered by the real driver; nothing is compiled or linked.  (They used to
+# fall through to the link: "-dumpversion" linked a.out.)  So is a bare "-v".
+if test "$has_query" = yes || { test $# -eq 1 && test "$1" = -v; }; then
+	exec "$real" "$@"
+fi
 
 # Every compile goes through the real driver, and the real driver assembles
 # through the assembler wrapper it finds under GCC_EXEC_PREFIX
@@ -489,6 +500,15 @@ if test "$has_S" = yes; then
 	exit 0
 fi
 
+# Compile and link.  Options are sorted into three kinds:
+#   - linker options, an explicit list (ld_flags, in command-line order);
+#   - wrapper link controls (-L, -l, -nostdlib, -nostartfiles, -o);
+#   - everything else, which belongs to the compiler and goes to the real
+#     driver with each compile (compile_flags), so an option it does not know
+#     is reported by gcc, not handed to ld.  (Unknown options used to go to ld:
+#     -ansi was an ld error, -include dropped, -Wl,-Map wrote no map.)
+# Inputs: .c, .i, .s and .S -- or any file after "-x <language>" -- are
+# compiled to objects first; every other file is a linker input, as with gcc.
 compile_flags=()
 sources=()
 objects=()
@@ -497,91 +517,93 @@ ld_flags=()
 lib_dirs=()
 libs=()
 out=a.out
-skip=
+lang=none
+nostdlib=no
+nostartfiles=no
+verbose=no
+
+need_arg()
+{
+	test "$1" -gt 1 || { echo "amix gcc wrapper: $2 needs an argument" >&2; exit 1; }
+}
 
 while test $# -gt 0; do
 	arg="$1"
-	shift
-
-	if test "$skip" = o; then
-		out="$arg"
-		skip=
-		continue
-	fi
-
 	case "$arg" in
 		-o)
-			skip=o
-			;;
-		-I|-D|-U|-L)
-			test $# -gt 0 || { echo "amix gcc wrapper: $arg needs an argument" >&2; exit 1; }
-			next="$1"
-			shift
-			case "$arg" in
-				-L) lib_dirs+=("$next") ;;
-				*) compile_flags+=("$arg" "$next") ;;
+			need_arg $# "$arg"; out="$2"; shift ;;
+		-o*)
+			out="${arg#-o}" ;;
+		-x)
+			need_arg $# "$arg"; lang="$2"; shift ;;
+		-L)
+			need_arg $# "$arg"; lib_dirs+=("$2"); shift ;;
+		-L*)
+			lib_dirs+=("${arg#-L}") ;;
+		-l)
+			need_arg $# "$arg"; libs+=("$2"); shift ;;
+		-l*)
+			libs+=("${arg#-l}") ;;
+		-nostdlib)
+			nostdlib=yes ;;
+		-nostartfiles)
+			nostartfiles=yes ;;
+		-v)
+			verbose=yes; compile_flags+=("$arg") ;;
+		# linker options
+		-Wl,*)
+			IFS=, read -r -a wl <<< "${arg#-Wl,}"
+			ld_flags+=("${wl[@]}") ;;
+		-Xlinker)
+			need_arg $# "$arg"; ld_flags+=("$2"); shift ;;
+		-u|-e|-h|-z|-T|-Y)
+			need_arg $# "$arg"; ld_flags+=("$arg" "$2"); shift ;;
+		-u?*|-e?*|-h?*|-z?*|-T?*|-Y?*)
+			ld_flags+=("$arg") ;;
+		-s|-r|-N|-n|-static|-shared|-symbolic|-G|-dn|-dy|-dc|-dp|-Bstatic|-Bdynamic|-Bsymbolic)
+			ld_flags+=("$arg") ;;
+		# compiler options that take a separate argument
+		-I|-D|-U|-include|-imacros|-idirafter|-iprefix|-iwithprefix|-iwithprefixbefore|-aux-info|-b|-V)
+			need_arg $# "$arg"; compile_flags+=("$arg" "$2"); shift ;;
+		# every other option is the compiler's (-O, -g, -f, -m, -W, -D, -ansi,
+		# -pedantic, -traditional, -w, -pipe, -save-temps, -dM, -MD, ...)
+		-?*)
+			compile_flags+=("$arg") ;;
+		*)
+			case "$lang:$arg" in
+				none:*.c|none:*.i|none:*.s|none:*.S)
+					sources+=("none:$arg") ;;
+				none:*.a|none:*.so|none:*.so.[0-9]*)
+					# fix (linking): an archive or shared library named on the
+					# command line goes AFTER the objects compiled from the
+					# sources, which are appended to objects[] below; single-pass
+					# ld meeting "libfoo.a" before "prog.o" would pull in no
+					# members.  Plain .o files stay in command-line order.
+					archives+=("$arg") ;;
+				none:*)
+					objects+=("$arg") ;;
+				*)
+					sources+=("$lang:$arg") ;;
 			esac
 			;;
-		-I*|-D*|-U*|-O*|-m*|-f*|-W*|-g|-traditional)
-			compile_flags+=("$arg")
-			;;
-		# fix (linking): gcc's -d<LETTERS> dump options (-dM, -dD, ...) belong
-		# to the compiler.  Filed as ld flags they reached ld right before an
-		# argument naming a sysroot file, and ld read "-dM" as a map request
-		# taking that next argument as the map file name: "cc -E -dM foo.c"
-		# with a wrapper lacking -E support overwrote the sysroot libc.so.1
-		# with a linker map.  Lower-case -dn/-dy/-dc/-dp stay ld options.
-		-d[A-Z]*)
-			compile_flags+=("$arg")
-			;;
-		-L*)
-			lib_dirs+=("${arg#-L}")
-			;;
-		-l*)
-			libs+=("${arg#-l}")
-			;;
-		# Everything the real driver compiles or assembles: compiled to an
-		# object here, then linked.
-		*.c|*.i|*.s|*.S)
-			sources+=("$arg")
-			;;
-		*.o)
-			objects+=("$arg")
-			;;
-		# fix (linking): a static archive or shared library named directly on the
-		# command line must be linked AFTER the objects that reference it.  The
-		# sources are compiled and their objects APPENDED to objects[] further
-		# down, so a .a/.so left in objects[] here would sort before them:
-		# "gcc prog.c libfoo.a" would link as "libfoo.a prog.o", and single-pass
-		# ld, meeting the archive while nothing is yet undefined, would pull in no
-		# members and every symbol in it would come back undefined.  Collect these
-		# separately and place them past the objects on the link line.  Plain .o
-		# relocatables stay in objects[] (they carry symbols, not just satisfy
-		# references, so their position among the objects does not matter).
-		*.a|*.so|*.so.[0-9]*)
-			archives+=("$arg")
-			;;
-		*)
-			if [[ "$arg" == -* ]]; then
-				ld_flags+=("$arg")
-			else
-				objects+=("$arg")
-			fi
-			;;
 	esac
+	shift
 done
 
-for input in "${sources[@]}" "${objects[@]}" "${archives[@]}"; do
+for input in "${sources[@]#*:}" "${objects[@]}" "${archives[@]}"; do
 	if test -n "$input" && test -e "$input" && test "$out" -ef "$input"; then
 		echo "amix gcc wrapper: refusing to overwrite input file '$input'" >&2
 		exit 1
 	fi
 done
 
-for src in "${sources[@]}"; do
+for li in "${sources[@]}"; do
+	l=${li%%:*} src=${li#*:}
+	xl=()
+	test "$l" = none || xl=(-x "$l")
 	obj="$(mktemp "${TMPDIR:-/tmp}/amix-gcc.XXXXXX.o")"
 	tmpfiles+=("$obj")
-	"$real" "${common_cflags[@]}" -c "${compile_flags[@]}" "$src" -o "$obj"
+	"$real" "${common_cflags[@]}" -c "${compile_flags[@]}" "${xl[@]}" "$src" -o "$obj"
 	objects+=("$obj")
 done
 
@@ -622,22 +644,35 @@ done
 # which reads as a broken toolchain rather than a missing -lc.  Appending it
 # after the user's libraries (so their libc references still resolve) means an
 # explicit trailing -lc is no longer required; a redundant one is harmless.
-resolved_libs+=("$(resolve_lib c)")
+# -nostdlib leaves out libc and libgcc.a, as with gcc.
+if test "$nostdlib" = no; then
+	resolved_libs+=("$(resolve_lib c)")
+else
+	libgcc_a=
+fi
 
-for crt in crt1.o crti.o crtn.o; do
-	test -f "$crt_dir/$crt" || {
-		echo "amix gcc wrapper: missing $crt_dir/$crt; set AMIX_CRT_DIR" >&2
-		exit 1
-	}
-done
+# The startup objects; -nostartfiles or -nostdlib leaves them out.
+startfiles=()
+endfiles=()
+if test "$nostdlib" = no && test "$nostartfiles" = no; then
+	for crt in crt1.o crti.o crtn.o; do
+		test -f "$crt_dir/$crt" || {
+			echo "amix gcc wrapper: missing $crt_dir/$crt; set AMIX_CRT_DIR" >&2
+			exit 1
+		}
+	done
+	startfiles=("$crt_dir/crt1.o" "$crt_dir/crti.o")
+	endfiles=("$crt_dir/crtn.o")
+fi
 
 # libgcc.a goes LAST (after the user's libraries, before crtn): it is a leaf
 # dependency, so any preceding static archive whose members reference the 64-bit
 # helpers must come before it for single-pass ld to resolve them.  This mirrors
 # a stock gcc driver, which appends -lgcc at the end of the link.
-exec "$ld" -o "$out" \
-	"$crt_dir/crt1.o" "$crt_dir/crti.o" \
+ld_cmd=("$ld" -o "$out" "${startfiles[@]}" \
 	"${objects[@]}" "${archives[@]}" "${ld_flags[@]}" \
 	"${ld_lib_dirs[@]}" "${resolved_libs[@]}" \
 	${libgcc_a:+"$libgcc_a"} \
-	"$crt_dir/crtn.o"
+	"${endfiles[@]}")
+test "$verbose" = no || echo " ${ld_cmd[*]}" >&2
+exec "${ld_cmd[@]}"
