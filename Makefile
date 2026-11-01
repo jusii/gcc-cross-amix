@@ -122,7 +122,7 @@ LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 	_fixsfdi _fixxfdi _fixunsxfdi _fixunsdfsi _fixunssfsi _fixunsxfsi \
 	__gcc_bcmp _clear_cache _shtab _trampoline
 
-.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc gcc-full install-gcc-wrapper install-target-ar libgcc install-libgcc env stage check test-hello test-uint64 test-divmod test-float test-fcmp test-cmpm test-bitfield test-lcomm test-objdir test-paths test-options test-link test-dtneeded test-kernel-volatile test-user-volatile test-kernel-object test-mul64 test-mul64-run test-scan060 print-vars clean distclean
+.PHONY: all help deps-hint download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc gcc-full install-gcc-wrapper install-target-ar libgcc install-libgcc env stage check test-hello test-uint64 test-divmod test-float test-fcmp test-cmpm test-bitfield test-lcomm test-objdir test-paths test-options test-link test-dtneeded test-kernel-volatile test-user-volatile test-kernel-object test-mul64 test-mul64-run test-scan060 print-vars clean distclean
 
 # A recipe that fails part-way never leaves its target behind looking finished.
 .DELETE_ON_ERROR:
@@ -133,8 +133,7 @@ help:
 	@echo "AMIX cross-toolchain bootstrap"
 	@echo ""
 	@echo "Common targets:"
-	@echo "  make deps-hint       Print LMDE/Debian package hints"
-	@echo "  make deps            Run apt-get install for build prerequisites"
+	@echo "  make deps-hint       List the build prerequisites (Debian/Ubuntu names)"
 	@echo "  make all             Build binutils, import AMIX sysroot, install GCC, write env.sh"
 	@echo "  make sysroot         Copy AMIX headers/libs into PREFIX/TARGET/sysroot"
 	@echo "  make validate-sysroot Check required user-supplied AMIX runtime files"
@@ -169,14 +168,16 @@ help:
 	@echo "  make TARGET=m68k-cbm-sysv4"
 	@echo "  make CPUFLAGS=-m68030"
 
-deps-hint:
-	@echo "On LMDE/Debian, install prerequisites with:"
-	@echo "  sudo apt-get update"
-	@echo "  sudo apt-get install build-essential make m4 bison flex texinfo curl wget gzip tar patch file"
+# Build prerequisites.  make installs nothing on the host itself.
+DEPS_DEBIAN := build-essential make m4 bison flex texinfo curl gzip tar patch file \
+	perl python3 bash
+DEPS_DEBIAN_TESTS := qemu-user gcc-m68k-linux-gnu
 
-deps:
-	sudo apt-get update
-	sudo apt-get install build-essential make m4 bison flex texinfo curl wget gzip tar patch file
+deps-hint:
+	@echo "Build prerequisites (Debian/Ubuntu package names):"
+	@echo "  $(DEPS_DEBIAN)"
+	@echo "make test-mul64-run also needs:"
+	@echo "  $(DEPS_DEBIAN_TESTS)"
 
 print-vars:
 	@echo "TARGET=$(TARGET)"

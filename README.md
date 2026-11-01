@@ -64,6 +64,11 @@ $AMIX_ROOT/usr/ccs/lib/crti.o
 $AMIX_ROOT/usr/ccs/lib/crtn.o
 ```
 
+`make deps-hint` lists the host packages the build needs (Debian/Ubuntu
+names): a C compiler, make, m4, bison, flex, texinfo, curl, patch, perl,
+python3 and bash; `make test-mul64-run` also needs `qemu-user` and
+`gcc-m68k-linux-gnu`. make itself installs nothing on the host.
+
 Build and install, from the repository root:
 
 ```sh
