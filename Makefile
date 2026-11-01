@@ -6,50 +6,58 @@
 
 SHELL := /bin/sh
 
-TARGET ?= m68k-cbm-sysv4
-BUILD ?= i686-pc-linux-gnu
-HOST ?= $(BUILD)
-PREFIX ?= $(HOME)/opt/amix-cross
+# Generic names (TARGET, PREFIX, SRCDIR, BUILDDIR, HOST_CC, ...) are plain
+# assignments, so a variable of the same name in the environment is ignored;
+# override them on the command line (make PREFIX=/opt/amix-cross).  Only the
+# AMIX_* names, which nothing else uses, may also come from the environment.
 
-BINUTILS_VERSION ?= 2.8.1
-GCC_VERSION ?= 2.7.2.3
+TARGET = m68k-cbm-sysv4
+BUILD = i686-pc-linux-gnu
+HOST = $(BUILD)
+PREFIX = $(HOME)/opt/amix-cross
 
-GNU_BASE ?= https://ftp.gnu.org/gnu
+BINUTILS_VERSION = 2.8.1
+GCC_VERSION = 2.7.2.3
+
+GNU_BASE = https://ftp.gnu.org/gnu
 BINUTILS_TARBALL := binutils-$(BINUTILS_VERSION).tar.gz
 GCC_TARBALL := gcc-$(GCC_VERSION).tar.gz
-BINUTILS_URL ?= $(GNU_BASE)/binutils/$(BINUTILS_TARBALL)
-GCC_URL ?= $(GNU_BASE)/gcc/$(GCC_TARBALL)
-BINUTILS_CONFIGURE_EXTRA ?=
-GCC_CONFIGURE_EXTRA ?=
-BINUTILS_DISABLE_DIRS ?=
-GCC_BUILD_TARGETS ?= xgcc cc1 cccp
-GCC_FULL_BUILD_TARGETS ?= LANGUAGES="c c++" all
+BINUTILS_URL = $(GNU_BASE)/binutils/$(BINUTILS_TARBALL)
+GCC_URL = $(GNU_BASE)/gcc/$(GCC_TARBALL)
+BINUTILS_CONFIGURE_EXTRA =
+GCC_CONFIGURE_EXTRA =
+BINUTILS_DISABLE_DIRS =
+GCC_BUILD_TARGETS = xgcc cc1 cccp
+GCC_FULL_BUILD_TARGETS = LANGUAGES="c c++" all
 
 HERE := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 AMIX_ROOT ?= $(abspath $(HERE)/../..)
 
-DISTDIR ?= $(HERE)/distfiles
-SRCDIR ?= $(HERE)/src
-BUILDDIR ?= $(HERE)/build
+DISTDIR = $(HERE)/distfiles
+SRCDIR = $(HERE)/src
+BUILDDIR = $(HERE)/build
+
+# Recipes delete and recreate trees under these; refuse an empty or root path.
+$(foreach v,PREFIX DISTDIR SRCDIR BUILDDIR,$(if $(filter-out /,$(strip $($(v)))),,$(error $(v) must name a directory, not '$($(v))')))
 
 BINUTILS_SRC := $(SRCDIR)/binutils-$(BINUTILS_VERSION)
 GCC_SRC := $(SRCDIR)/gcc-$(GCC_VERSION)
 BINUTILS_BUILD := $(BUILDDIR)/binutils-$(BINUTILS_VERSION)-$(TARGET)
 GCC_BUILD := $(BUILDDIR)/gcc-$(GCC_VERSION)-$(TARGET)
 
-HOST_CC ?= gcc
-HOST_CFLAGS ?= -O2 -g -std=gnu89 -fcommon -no-pie
+HOST_CC = gcc
+HOST_CFLAGS = -O2 -g -std=gnu89 -fcommon -no-pie
 AMIX_MAKEINFO ?= true
 override MAKEINFO := $(AMIX_MAKEINFO)
-MAKE_JOBS ?= $(shell nproc 2>/dev/null || echo 1)
-CONFIG_GUESS ?= /usr/share/misc/config.guess
-CONFIG_SUB ?= /usr/share/misc/config.sub
+MAKE_JOBS := $(shell nproc 2>/dev/null || echo 1)
+CONFIG_GUESS = /usr/share/misc/config.guess
+CONFIG_SUB = /usr/share/misc/config.sub
 
-CPUFLAGS ?= -m68020
+CPUFLAGS = -m68020
 AMIX_KERNEL_CPPFLAGS ?= -D_KERNEL -DSVR40 -DSVR4
 AMIX_KERNEL_INCLUDES ?= -I$(AMIX_ROOT)/usr/include -I$(AMIX_ROOT)/usr/sys -I$(AMIX_ROOT)/usr/sys/amiga/inc
 AMIX_KERNEL_CFLAGS ?= -O -traditional -fno-builtin -Dinline=__inline__ -Dvolatile=__volatile__ -Dconst=__const__ $(CPUFLAGS) $(AMIX_KERNEL_CPPFLAGS) $(AMIX_KERNEL_INCLUDES)
-SYSROOT ?= $(PREFIX)/$(TARGET)/sysroot
+SYSROOT = $(PREFIX)/$(TARGET)/sysroot
 AMIX_USR_LIB ?= $(AMIX_ROOT)/usr/lib
 AMIX_CRT_DIR ?= $(SYSROOT)/usr/ccs/lib
 AMIX_CRTS ?= crt1.o crti.o crtn.o
@@ -66,8 +74,8 @@ GCC_REAL := $(PREFIX)/bin/$(TARGET)-gcc.real
 
 # Host ar/ranlib the target ar/ranlib wrappers delegate to (see
 # amix-ar-wrapper.sh and install-target-ar).
-HOST_AR ?= ar
-HOST_RANLIB ?= ranlib
+HOST_AR = ar
+HOST_RANLIB = ranlib
 
 # Target libgcc: the freestanding libgcc2 helper routines built from the GCC
 # 2.7.2.3 source and archived into libgcc.a.  These are the soft-arithmetic
@@ -84,7 +92,7 @@ HOST_RANLIB ?= ranlib
 # they ever be wanted.)
 LIBGCC_A := $(GCC_LIBDIR)/libgcc.a
 LIBGCC2_BUILD_DIR := $(GCC_BUILD)/amix-libgcc
-LIBGCC2_BUILD_CFLAGS ?= -O2
+LIBGCC2_BUILD_CFLAGS = -O2
 LIBGCC2_BUILD_INCLUDES := -I$(GCC_BUILD) -I$(GCC_SRC) -I$(GCC_SRC)/config -I$(GCC_SRC)/ginclude
 LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 	_lshrdi3 _ashldi3 _ashrdi3 _udiv_w_sdiv _udivmoddi4 _cmpdi2 _ucmpdi2 \
@@ -198,8 +206,7 @@ $(SRCDIR):
 
 $(BINUTILS_SRC)/.amix-cross-extracted: $(DISTDIR)/$(BINUTILS_TARBALL) | $(SRCDIR)
 	$(call check_distfile,$(DISTDIR)/$(BINUTILS_TARBALL),$(BINUTILS_TARBALL))
-	rm -rf $(BINUTILS_SRC)
-	rm -rf $(BINUTILS_BUILD)
+	@s='$(BINUTILS_SRC)'; b='$(BINUTILS_BUILD)'; rm -rf "$${s:?}" "$${b:?}"
 	cd $(SRCDIR) && tar -xzf $(DISTDIR)/$(BINUTILS_TARBALL)
 	$(MAKE) refresh-config TREE=$(BINUTILS_SRC)
 	$(MAKE) patch-binutils TREE=$(BINUTILS_SRC)
@@ -208,8 +215,7 @@ $(BINUTILS_SRC)/.amix-cross-extracted: $(DISTDIR)/$(BINUTILS_TARBALL) | $(SRCDIR
 
 $(GCC_SRC)/.amix-cross-extracted: $(DISTDIR)/$(GCC_TARBALL) | $(SRCDIR)
 	$(call check_distfile,$(DISTDIR)/$(GCC_TARBALL),$(GCC_TARBALL))
-	rm -rf $(GCC_SRC)
-	rm -rf $(GCC_BUILD)
+	@s='$(GCC_SRC)'; b='$(GCC_BUILD)'; rm -rf "$${s:?}" "$${b:?}"
 	cd $(SRCDIR) && tar -xzf $(DISTDIR)/$(GCC_TARBALL)
 	$(MAKE) refresh-config TREE=$(GCC_SRC)
 	$(MAKE) patch-gcc TREE=$(GCC_SRC)
@@ -227,7 +233,7 @@ disable-binutils-dirs:
 	@test -n "$(TREE)" || { echo "TREE is required"; exit 1; }
 	@for dir in $(BINUTILS_DISABLE_DIRS); do \
 		if test -d "$(TREE)/$$dir" && test ! -d "$(TREE)/$$dir.disabled"; then \
-			mv "$(TREE)/$$dir" "$(TREE)/$$dir.disabled"; \
+			t='$(TREE)'; mv "$${t:?}/$${dir:?}" "$$t/$$dir.disabled"; \
 			echo "Disabled binutils subdir $$dir"; \
 		fi; \
 	done
@@ -324,7 +330,7 @@ sysroot:
 			tmp="$(SYSROOT)/usr/lib/.$$f.tmp"; \
 			cp "$(AMIX_USR_LIB)/$$f" "$$tmp"; \
 			test -s "$$tmp"; \
-			mv "$$tmp" "$(SYSROOT)/usr/lib/$$f"; \
+			mv "$${tmp:?}" "$(SYSROOT)/usr/lib/$${f:?}"; \
 		fi; \
 	done
 	@for d in include sys ccs; do \
@@ -468,8 +474,8 @@ install-target-ar:
 		    -e "s|@HOST_AR@|$$hostar|g" \
 		    -e "s|@HOST_RANLIB@|$$hostranlib|g" \
 		    "$(HERE)/amix-ar-wrapper.sh" > "$$dest.amix-tmp"; \
-		rm -f "$$dest"; \
-		mv "$$dest.amix-tmp" "$$dest"; \
+		rm -f "$${dest:?}"; \
+		mv "$${dest:?}.amix-tmp" "$$dest"; \
 		chmod 755 "$$dest"; \
 		echo "Installed $$dest (delegates to host $$tool)"; \
 	done
@@ -486,7 +492,7 @@ libgcc: install-target-ar
 	@test -f "$(GCC_BUILD)/tm.h" || { echo "Missing $(GCC_BUILD)/tm.h; run 'make install-gcc' first"; exit 1; }
 	@grep -q 'amix gcc wrapper' "$(TARGET_CC)" 2>/dev/null || { \
 		echo "$(TARGET_CC) is not the AMIX wrapper compiler; run 'make install-gcc-wrapper' first"; exit 1; }
-	rm -rf $(LIBGCC2_BUILD_DIR)
+	@d='$(LIBGCC2_BUILD_DIR)'; rm -rf "$${d:?}"
 	mkdir -p $(LIBGCC2_BUILD_DIR)
 	@set -e; objs=""; \
 	for name in $(LIBGCC2_FUNCS); do \
@@ -898,7 +904,7 @@ test-bitfield: refresh-gcc-wrapper env
 # that same file fails too.  The .S case loses only the object: there the file
 # the assembler clobbers is gcc's own preprocessed temporary, not the input.
 test-objdir: refresh-gcc-wrapper env
-	rm -rf $(BUILDDIR)/test/objdir $(BUILDDIR)/test/objdir-src $(BUILDDIR)/test/objdir-pristine
+	@t='$(BUILDDIR)/test'; rm -rf "$${t:?}/objdir" "$$t/objdir-src" "$$t/objdir-pristine"
 	mkdir -p $(BUILDDIR)/test/objdir $(BUILDDIR)/test/objdir-src $(BUILDDIR)/test/objdir-pristine
 	printf '%s\n' \
 		'/* Compiled from a DIFFERENT directory than the one it lives in. */' \
@@ -1208,7 +1214,7 @@ test-scan060: refresh-gcc-wrapper
 	$(PREFIX)/bin/$(TARGET)-scan060 --self-test
 
 clean:
-	rm -rf $(BUILDDIR)
+	@d='$(BUILDDIR)'; rm -rf "$${d:?}"
 
 distclean: clean
-	rm -rf $(SRCDIR) $(DISTDIR)
+	@s='$(SRCDIR)'; d='$(DISTDIR)'; rm -rf "$${s:?}" "$${d:?}"
