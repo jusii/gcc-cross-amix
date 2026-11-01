@@ -14,7 +14,7 @@
 # Needs the AMIX crt objects, values-X*.o, libc.so.1 and libm.a in the sysroot.
 . "$(dirname "$0")/lib.sh"
 status=0
-cd "$W"
+cd "${W:?}"
 rm -f ./prog* ./*.err
 cat > m.c <<'EOF2'
 extern double sqrt();

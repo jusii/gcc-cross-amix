@@ -51,7 +51,7 @@
 # that same file fails too.  The .S case loses only the object: there the file
 # the assembler clobbers is gcc's own preprocessed temporary, not the input.
 . "$(dirname "$0")/lib.sh"
-rm -rf "${W:?}/objdir" "$W/objdir-src" "$W/objdir-pristine"
+rm -rf "${W:?}/objdir" "${W:?}/objdir-src" "${W:?}/objdir-pristine"
 mkdir -p $W/objdir $W/objdir-src $W/objdir-pristine
 printf '%s\n' \
 	'/* Compiled from a DIFFERENT directory than the one it lives in. */' \
@@ -96,7 +96,7 @@ for probe in objdir_src.c objdir_asm.s objdir_cpp.S; do \
 	else \
 		echo "  FAIL the compile overwrote its own source file ../objdir-src/$probe"; status=1; \
 	fi; \
-	rm -f $W/objdir/$base.o; \
+	rm -f "${W:?}/objdir/${base:?}.o"; \
 	( cd $W/objdir && \
 		"$CC" $CPUFLAGS -O -c ../objdir-src/$probe -o ../objdir-src/$base-explicit.o < /dev/null ) \
 		|| { echo "  FAIL explicit -o exited nonzero"; status=1; }; \

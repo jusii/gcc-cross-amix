@@ -11,7 +11,7 @@
 #       size alignment, in .bss, and the -S output has no 3-operand .lcomm.
 . "$(dirname "$0")/lib.sh"
 status=0
-cd "$W"
+cd "${W:?}"
 cat > lcomm.c <<'EOF2'
 static char a16[3] __attribute__((aligned(16)));
 static int i32 __attribute__((aligned(32)));

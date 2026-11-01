@@ -233,7 +233,7 @@ define fetch_distfile
 	@f='$@'; rm -f "$${f:?}.tmp"; \
 	{ curl -fsSL --retry 3 -o "$$f.tmp" '$(1)' || wget -O "$$f.tmp" '$(1)'; } || { rm -f "$${f:?}.tmp"; exit 1; }
 	$(call check_distfile,$@.tmp,$(notdir $@))
-	@f='$@'; mv "$${f:?}.tmp" "$$f"
+	@f='$@'; mv "$${f:?}.tmp" "$${f:?}"
 endef
 
 $(DISTDIR)/$(BINUTILS_TARBALL): | $(DISTDIR)
@@ -291,7 +291,7 @@ disable-binutils-dirs:
 	@test -n "$(TREE)" || { echo "TREE is required"; exit 1; }
 	@for dir in $(BINUTILS_DISABLE_DIRS); do \
 		if test -d "$(TREE)/$$dir" && test ! -d "$(TREE)/$$dir.disabled"; then \
-			t='$(TREE)'; mv "$${t:?}/$${dir:?}" "$$t/$$dir.disabled"; \
+			t='$(TREE)'; mv "$${t:?}/$${dir:?}" "$${t:?}/$${dir:?}.disabled"; \
 			echo "Disabled binutils subdir $$dir"; \
 		fi; \
 	done
@@ -536,7 +536,7 @@ $(TARGET_AR_STAMP): $(BINUTILS_INSTALL_STAMP) $(HERE)/amix-ar-wrapper.sh
 		    -e "s|@HOST_RANLIB@|$$hostranlib|g" \
 		    "$(HERE)/amix-ar-wrapper.sh" > "$$dest.amix-tmp"; \
 		rm -f "$${dest:?}"; \
-		mv "$${dest:?}.amix-tmp" "$$dest"; \
+		mv "$${dest:?}.amix-tmp" "$${dest:?}"; \
 		chmod 755 "$$dest"; \
 		echo "Installed $$dest (delegates to host $$tool)"; \
 	done
@@ -558,7 +558,7 @@ $(LIBGCC_STAMP): $(WRAPPER_STAMP) $(TARGET_AR_STAMP) $(SYSROOT_STAMP)
 			-DL$$name -c "$(GCC_SRC)/libgcc2.c" -o "$(LIBGCC2_BUILD_DIR)/$$name.o"; \
 		objs="$$objs $$name.o"; \
 	done; \
-	cd "$(LIBGCC2_BUILD_DIR)" && rm -f libgcc.a && \
+	d='$(LIBGCC2_BUILD_DIR)'; cd "$${d:?}" && rm -f libgcc.a && \
 		"$(TARGET_AR)" rc libgcc.a $$objs && \
 		"$(TARGET_RANLIB)" libgcc.a
 	@echo "Built $(LIBGCC2_BUILD_DIR)/libgcc.a"
@@ -617,7 +617,8 @@ stage: sysroot-check
 	@for f in $(PREFIX)/bin/$(TARGET)-*; do ln -s "$$f" $(STAGE)/bin/ || exit 1; done
 	@for f in $(GCC_LIBDIR)/*; do ln -s "$$f" $(STAGE_LIBDIR)/ || exit 1; done
 	@ln -s $(PREFIX)/$(TARGET) $(STAGE)/$(TARGET)
-	@rm -f $(STAGE)/bin/$(TARGET)-gcc $(STAGE)/bin/$(TARGET)-scan060 $(STAGE_LIBDIR)/as $(STAGE_LIBDIR)/specs
+	@s='$(STAGE)'; l='$(STAGE_LIBDIR)'; t='$(TARGET)'; \
+	rm -f "$${s:?}/bin/$${t:?}-gcc" "$${s:?}/bin/$${t:?}-scan060" "$${l:?}/as" "$${l:?}/specs"
 	$(call fix_specs,$(GCC_LIBDIR)/specs,$(STAGE_LIBDIR)/specs)
 	$(call install_gcc_wrapper,$(STAGE))
 

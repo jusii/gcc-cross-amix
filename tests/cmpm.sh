@@ -11,7 +11,7 @@
 # written in this target's SGS order, must come out as the C reads it.
 . "$(dirname "$0")/lib.sh"
 status=0
-cd "$W"
+cd "${W:?}"
 cat > cmpm.c <<'EOF2'
 int m0(char *p, char *q) { int r; __asm__("cmpm.b (%1)+,(%2)+\n\tseq %0" : "=d"(r), "=a"(p), "=a"(q) : "1"(p), "2"(q)); return r; }
 int m1(char *p, char *q) { int r; __asm__("\tcmpm.b (%1)+,(%2)+\n\tseq %0" : "=d"(r), "=a"(p), "=a"(q) : "1"(p), "2"(q)); return r; }

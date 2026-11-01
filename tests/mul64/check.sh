@@ -65,7 +65,7 @@ done
 cat > "$W/div64.c" <<'EOF'
 int q(int hi, int lo, int d) { __asm__("divs.l %2,%0:%1" : "=d"(hi), "=d"(lo) : "d"(d), "0"(hi), "1"(lo)); return lo; }
 EOF
-rm -f "$W/div64.o"
+rm -f "${W:?}/div64.o"
 if "$CC" -O -c "$W/div64.c" -o "$W/div64.o" 2> "$W/div64.err"; then
 	fail "a 64-bit-dividend divide compiled"
 fi

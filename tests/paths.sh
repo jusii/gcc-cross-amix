@@ -23,7 +23,7 @@ status=0
 AS=$TOOL-as
 asarch=-m68020
 for f in $CPUFLAGS; do case "$f" in -m68030|-m68040|-m68060) asarch=$f ;; esac; done
-cd "$W"
+cd "${W:?}"
 rm -f ./*.o ./*.i ./*.s ./*.dis ./paths ./paths-*
 cat > probe.c <<'EOF'
 int sw(int x) { switch (x) { case 0: return 3; case 1: return 9; case 2: return 11; case 3: return 17; } return 0; }

@@ -12,7 +12,7 @@
 status=0
 ok() { echo "  ok   $*"; }
 bad() { echo "  FAIL $*"; status=1; }
-cd "$W"
+cd "${W:?}"
 rm -f ./*.o ./*.map ./a.out ./prog* ./*.err
 cat > prog.c <<'EOF'
 #ifndef FROM_INCLUDE

@@ -8,7 +8,7 @@
 # the other branch.  Each line below must survive preprocessing.
 . "$(dirname "$0")/lib.sh"
 status=0
-cd "$W"
+cd "${W:?}"
 cat > cpp32.c <<'EOF2'
 #if (1 << 31) < 0
 sign_bit_negative
