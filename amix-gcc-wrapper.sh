@@ -10,6 +10,11 @@ ld="$bindir/$target-ld"
 sysroot="${AMIX_SYSROOT:-$prefix/$target/sysroot}"
 crt_dir="${AMIX_CRT_DIR:-$sysroot/usr/ccs/lib}"
 
+# The real driver finds cc1, cpp and its specs under the GCC_EXEC_PREFIX it
+# is given rather than the prefix compiled into it, so the installed tree
+# works wherever it is moved or copied.
+export GCC_EXEC_PREFIX="$prefix/lib/gcc-lib/"
+
 common_cflags=(-I"$sysroot/usr/include")
 default_lib_dirs=("$sysroot/usr/lib")
 tmpfiles=()

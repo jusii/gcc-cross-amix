@@ -47,6 +47,10 @@ GCC_BUILD := $(BUILDDIR)/gcc-$(GCC_VERSION)-$(TARGET)
 
 HOST_CC = gcc
 HOST_CFLAGS = -O2 -g -std=gnu89 -fcommon -no-pie
+# __FILE__ in the binutils and gcc sources (assertion messages) would carry the
+# source and build directories into the installed binaries; map them away.
+HOST_PATH_CFLAGS := $(shell $(HOST_CC) -ffile-prefix-map=a=b -E -x c /dev/null >/dev/null 2>&1 && \
+	echo -ffile-prefix-map=$(SRCDIR)/= -ffile-prefix-map=$(BUILDDIR)/=)
 AMIX_MAKEINFO ?= true
 override MAKEINFO := $(AMIX_MAKEINFO)
 MAKE_JOBS := $(shell nproc 2>/dev/null || echo 1)
@@ -86,6 +90,9 @@ LIBGCC_INSTALL_STAMP := $(STAMPDIR)/libgcc-installed
 # amix-ar-wrapper.sh and install-target-ar).
 HOST_AR = ar
 HOST_RANLIB = ranlib
+# Strips the host binaries the toolchain installs (the compiler proper and
+# binutils): their debug information carries the build directory's paths.
+HOST_STRIP = strip
 
 # Target libgcc: the freestanding libgcc2 helper routines built from the GCC
 # 2.7.2.3 source and archived into libgcc.a.  These are the soft-arithmetic
@@ -278,7 +285,7 @@ $(STAMPDIR):
 
 $(BINUTILS_BUILD)/config.status: $(BINUTILS_SRC)/.amix-cross-extracted | $(BUILDDIR)
 	mkdir -p $(BINUTILS_BUILD)
-	cd $(BINUTILS_BUILD) && CC="$(HOST_CC)" CFLAGS="$(HOST_CFLAGS)" $(BINUTILS_SRC)/configure \
+	cd $(BINUTILS_BUILD) && CC="$(HOST_CC)" CFLAGS="$(HOST_CFLAGS) $(HOST_PATH_CFLAGS)" $(BINUTILS_SRC)/configure \
 		--target=$(TARGET) \
 		--prefix=$(PREFIX) \
 		--disable-nls \
@@ -287,15 +294,19 @@ $(BINUTILS_BUILD)/config.status: $(BINUTILS_SRC)/.amix-cross-extracted | $(BUILD
 $(BINUTILS_STAMP): $(BINUTILS_BUILD)/config.status | $(STAMPDIR)
 	$(MAKE) -C $(BINUTILS_BUILD) -j$(MAKE_JOBS) \
 		CC="$(HOST_CC)" \
-		CFLAGS="$(HOST_CFLAGS)" \
+		CFLAGS="$(HOST_CFLAGS) $(HOST_PATH_CFLAGS)" \
 		MAKEINFO="$(AMIX_MAKEINFO)"
 	touch $@
 
 $(BINUTILS_INSTALL_STAMP): $(BINUTILS_STAMP)
 	$(MAKE) -C $(BINUTILS_BUILD) install \
 		CC="$(HOST_CC)" \
-		CFLAGS="$(HOST_CFLAGS)" \
+		CFLAGS="$(HOST_CFLAGS) $(HOST_PATH_CFLAGS)" \
 		MAKEINFO="$(AMIX_MAKEINFO)"
+	@for f in $(PREFIX)/bin/$(TARGET)-* $(PREFIX)/$(TARGET)/bin/*; do \
+		test "$$(head -c 4 "$$f" | od -An -tx1 | tr -d ' ')" = 7f454c46 || continue; \
+		chmod u+w "$$f" && $(HOST_STRIP) "$$f" || exit 1; \
+	done
 	touch $@
 
 binutils: $(BINUTILS_STAMP)
@@ -401,7 +412,7 @@ github-safety-check:
 # assembler and linker under PREFIX), not the sysroot.
 $(GCC_BUILD)/config.status: $(GCC_SRC)/.amix-cross-extracted $(BINUTILS_INSTALL_STAMP) | $(BUILDDIR)
 	mkdir -p $(GCC_BUILD)
-	cd $(GCC_BUILD) && PATH="$(PATH_FOR_BUILD)" CC="$(HOST_CC)" CFLAGS="$(HOST_CFLAGS)" $(GCC_SRC)/configure \
+	cd $(GCC_BUILD) && PATH="$(PATH_FOR_BUILD)" CC="$(HOST_CC)" CFLAGS="$(HOST_CFLAGS) $(HOST_PATH_CFLAGS)" $(GCC_SRC)/configure \
 		--build=$(BUILD) \
 		--host=$(HOST) \
 		--target=$(TARGET) \
@@ -419,7 +430,7 @@ $(GCC_STAMP): $(GCC_BUILD)/config.status | $(STAMPDIR)
 	PATH="$(PATH_FOR_BUILD)" $(MAKE) -C $(GCC_BUILD) -j$(MAKE_JOBS) \
 		LANGUAGES=c \
 		CC="$(HOST_CC)" \
-		CFLAGS="$(HOST_CFLAGS)" \
+		CFLAGS="$(HOST_CFLAGS) $(HOST_PATH_CFLAGS)" \
 		MAKEINFO="$(AMIX_MAKEINFO)" \
 		$(GCC_BUILD_TARGETS)
 	touch $@
@@ -432,6 +443,7 @@ $(GCC_INSTALL_STAMP): $(GCC_STAMP)
 	cp $(GCC_BUILD)/xgcc $(GCC_REAL)
 	cp $(GCC_BUILD)/cc1 $(GCC_LIBDIR)/cc1
 	cp $(GCC_BUILD)/cccp $(GCC_LIBDIR)/cpp
+	$(HOST_STRIP) $(GCC_REAL) $(GCC_LIBDIR)/cc1 $(GCC_LIBDIR)/cpp
 	PATH="$(PATH_FOR_BUILD)" $(GCC_BUILD)/xgcc -B$(GCC_BUILD)/ -dumpspecs > $(GCC_LIBDIR)/specs
 	chmod 755 $(GCC_REAL) $(GCC_LIBDIR)/cc1 $(GCC_LIBDIR)/cpp
 	touch $@
@@ -442,7 +454,7 @@ install-gcc: $(GCC_INSTALL_STAMP)
 gcc-full: $(GCC_BUILD)/config.status check-runtime
 	PATH="$(PATH_FOR_BUILD)" $(MAKE) -C $(GCC_BUILD) -j$(MAKE_JOBS) \
 		CC="$(HOST_CC)" \
-		CFLAGS="$(HOST_CFLAGS)" \
+		CFLAGS="$(HOST_CFLAGS) $(HOST_PATH_CFLAGS)" \
 		MAKEINFO="$(AMIX_MAKEINFO)" \
 		$(GCC_FULL_BUILD_TARGETS)
 
