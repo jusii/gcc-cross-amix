@@ -70,8 +70,8 @@ $AMIX_ROOT/usr/ccs/lib/crtn.o
 ```
 
 `make deps-hint` lists the host packages the build needs (Debian/Ubuntu
-names): a C compiler, make, m4, bison, flex, texinfo, curl, patch, perl,
-python3 and bash; `make test-mul64-run` also needs `qemu-user` and
+names): a C compiler that can build 32-bit programs (`gcc-multilib`), make,
+m4, bison, flex, texinfo, curl, patch, perl, python3 and bash; `make test-mul64-run` also needs `qemu-user` and
 `gcc-m68k-linux-gnu`. make itself installs nothing on the host.
 
 Build and install, from the repository root:
@@ -515,6 +515,15 @@ rather than edit it.
 
 `HOST_CFLAGS` defaults to `-O2 -g -std=gnu89 -fcommon -no-pie` because the 1990s GNU
 configure tests and sources expect pre-C99 implicit `int` behavior.
+
+gcc is configured for an i686 host, and its host configuration says `long`
+is 32 bits wide, so it is built as 32-bit code with `GCC_HOST_CC`
+(`$(HOST_CC) -m32`; Debian/Ubuntu need `gcc-multilib`). Built as 64-bit code,
+its preprocessor did `#if` arithmetic in 64 bits: `#if (1 << 31) < 0` was
+false where the native AMIX `cpp` says true. The build stops with a message
+if `GCC_HOST_CC` cannot build and run a 32-bit program; `make test-cpp32`
+gates the result. binutils is configured for the build machine and built
+with `HOST_CC` as it is.
 
 `BINUTILS_DISABLE_DIRS` is empty by default now. GNU `ld` must build for the
 toolchain to become self-contained.

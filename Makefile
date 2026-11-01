@@ -54,6 +54,13 @@ GCC_BUILD := $(BUILDDIR)/gcc-$(GCC_VERSION)-$(TARGET)
 
 HOST_CC = gcc
 HOST_CFLAGS = -O2 -g -std=gnu89 -fcommon -no-pie
+# gcc is configured for an i686 host (BUILD, HOST), whose configuration says
+# long is 32 bits wide, so it is built as 32-bit code.  Built as 64-bit code,
+# cpp evaluated #if in a 64-bit long: "#if (1 << 31) < 0" was false, where the
+# native AMIX cpp says true.  Needs a multilib host compiler (Debian/Ubuntu:
+# gcc-multilib).  binutils is configured for the build machine itself and is
+# built with HOST_CC as it is.
+GCC_HOST_CC = $(HOST_CC) -m32
 # __FILE__ in the binutils and gcc sources (assertion messages) would carry the
 # source and build directories into the installed binaries; map them away.
 HOST_PATH_CFLAGS := $(shell $(HOST_CC) -ffile-prefix-map=a=b -E -x c /dev/null >/dev/null 2>&1 && \
@@ -124,7 +131,7 @@ LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 	_fixsfdi _fixxfdi _fixunsxfdi _fixunsdfsi _fixunssfsi _fixunsxfsi \
 	__gcc_bcmp _clear_cache _shtab _trampoline
 
-.PHONY: all help deps-hint download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc install-gcc-wrapper install-target-ar libgcc install-libgcc env stage check test-hello test-uint64 test-divmod test-float test-fcmp test-cmpm test-bitfield test-lcomm test-objdir test-paths test-options test-link test-dtneeded test-kernel-volatile test-user-volatile test-kernel-object test-mul64 test-mul64-run test-scan060 print-vars clean distclean
+.PHONY: all help deps-hint download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc install-gcc-wrapper install-target-ar libgcc install-libgcc env stage check test-hello test-uint64 test-cpp32 test-divmod test-float test-fcmp test-cmpm test-bitfield test-lcomm test-objdir test-paths test-options test-link test-dtneeded test-kernel-volatile test-user-volatile test-kernel-object test-mul64 test-mul64-run test-scan060 print-vars clean distclean
 
 # A recipe that fails part-way never leaves its target behind looking finished.
 .DELETE_ON_ERROR:
@@ -170,8 +177,8 @@ help:
 	@echo "  make CPUFLAGS=-m68030"
 
 # Build prerequisites.  make installs nothing on the host itself.
-DEPS_DEBIAN := build-essential make m4 bison flex texinfo curl gzip tar patch file \
-	perl python3 bash
+DEPS_DEBIAN := build-essential gcc-multilib make m4 bison flex texinfo curl gzip tar \
+	patch file perl python3 bash
 DEPS_DEBIAN_TESTS := qemu-user gcc-m68k-linux-gnu
 
 deps-hint:
@@ -423,7 +430,12 @@ github-safety-check:
 # assembler and linker under PREFIX), not the sysroot.
 $(GCC_BUILD)/config.status: $(GCC_SRC)/.amix-cross-extracted $(BINUTILS_INSTALL_STAMP) | $(BUILDDIR)
 	mkdir -p $(GCC_BUILD)
-	cd $(GCC_BUILD) && PATH="$(PATH_FOR_BUILD)" CC="$(HOST_CC)" CFLAGS="$(HOST_CFLAGS) $(HOST_PATH_CFLAGS)" $(GCC_SRC)/configure \
+	@printf 'int main(void) { return sizeof (long) != 4 || sizeof (char *) != 4; }\n' > $(GCC_BUILD)/host32.c
+	@$(GCC_HOST_CC) -o $(GCC_BUILD)/host32 $(GCC_BUILD)/host32.c 2>/dev/null && $(GCC_BUILD)/host32 || { \
+		echo "'$(GCC_HOST_CC)' cannot build and run a 32-bit program, and gcc must be one:" >&2; \
+		echo "install a multilib host compiler (Debian/Ubuntu: gcc-multilib), or name one with GCC_HOST_CC=..." >&2; \
+		exit 1; }
+	cd $(GCC_BUILD) && PATH="$(PATH_FOR_BUILD)" CC="$(GCC_HOST_CC)" CFLAGS="$(HOST_CFLAGS) $(HOST_PATH_CFLAGS)" $(GCC_SRC)/configure \
 		--build=$(BUILD) \
 		--host=$(HOST) \
 		--target=$(TARGET) \
@@ -440,7 +452,7 @@ $(GCC_STAMP): $(GCC_BUILD)/config.status | $(STAMPDIR)
 	fi
 	PATH="$(PATH_FOR_BUILD)" $(MAKE) -C $(GCC_BUILD) -j$(MAKE_JOBS) \
 		LANGUAGES=c \
-		CC="$(HOST_CC)" \
+		CC="$(GCC_HOST_CC)" \
 		CFLAGS="$(HOST_CFLAGS) $(HOST_PATH_CFLAGS)" \
 		MAKEINFO="$(AMIX_MAKEINFO)" \
 		$(GCC_BUILD_TARGETS)
@@ -585,7 +597,7 @@ STAGE_CC := $(STAGE)/bin/$(TARGET)-gcc
 TEST_ENV = CC='$(STAGE_CC)' CPUFLAGS='$(CPUFLAGS)' SYSROOT='$(SYSROOT)' \
 	AMIX_SYSROOT='$(SYSROOT)' AMIX_CRT_DIR='$(AMIX_CRT_DIR)' AMIX_ROOT='$(AMIX_ROOT)' \
 	AMIX_KERNEL_CFLAGS='$(AMIX_KERNEL_CFLAGS)' AMIX_USER_CFLAGS='$(AMIX_USER_CFLAGS)'
-CHECK_GATES := divmod float fcmp cmpm bitfield lcomm objdir paths options link uint64 dtneeded kernel-volatile \
+CHECK_GATES := cpp32 divmod float fcmp cmpm bitfield lcomm objdir paths options link uint64 dtneeded kernel-volatile \
 	user-volatile kernel-object mul64 scan060
 
 stage: sysroot-check
@@ -599,7 +611,7 @@ stage: sysroot-check
 	$(call fix_specs,$(GCC_LIBDIR)/specs,$(STAGE_LIBDIR)/specs)
 	$(call install_gcc_wrapper,$(STAGE))
 
-$(addprefix test-,divmod float fcmp cmpm bitfield lcomm objdir paths options link uint64 dtneeded kernel-volatile user-volatile kernel-object): test-%: stage
+$(addprefix test-,cpp32 divmod float fcmp cmpm bitfield lcomm objdir paths options link uint64 dtneeded kernel-volatile user-volatile kernel-object): test-%: stage
 	$(TEST_ENV) W='$(BUILDDIR)/test/$*' sh $(HERE)/tests/$*.sh
 
 test-dtneeded: check-runtime
