@@ -31,6 +31,7 @@
 # This is the 68060 gate the cross gcc wrapper runs when AMIX_SCAN060=1 is set;
 # it can also be pointed at any object, archive, executable or directory.
 
+import bisect
 import os
 import re
 import shutil
@@ -105,6 +106,37 @@ def scan_listing(text):
     return total, hits
 
 
+class Malformed(Exception):
+    """A truncated or inconsistent ELF or archive."""
+
+
+def unpack(fmt, data, off):
+    """struct.unpack_from with a bounds check that raises Malformed."""
+    n = struct.calcsize(fmt)
+    if off < 0 or off + n > len(data):
+        raise Malformed("%d bytes at offset %d run past the end (%d bytes)"
+                        % (n, off, len(data)))
+    return struct.unpack_from(fmt, data, off)
+
+
+def section_headers(data):
+    """ELF32 big-endian -> [(type, flags, addr, offset, size)], bounds-checked."""
+    if len(data) < 52:
+        raise Malformed("shorter than an ELF header")
+    shoff, = unpack(">I", data, 32)
+    shentsize, shnum = unpack(">HH", data, 46)
+    if shnum and shentsize < 40:
+        raise Malformed("section header size %d" % shentsize)
+    out = []
+    for i in range(shnum):
+        _n, typ, flags, addr, off, size = unpack(">IIIIII", data,
+                                                 shoff + i * shentsize)
+        if typ != 8 and size and off + size > len(data):    # 8: SHT_NOBITS
+            raise Malformed("section %d runs past the end" % i)
+        out.append((typ, flags, addr, off, size))
+    return out
+
+
 def is_m68k(data):
     """ELF32 big-endian, e_machine EM_68K (4)."""
     return (len(data) >= 20 and data[:4] == ELF_MAGIC and data[4] == 1
@@ -113,15 +145,9 @@ def is_m68k(data):
 
 def exec_sections(data):
     """ELF32 big-endian -> [(addr, file_offset, size)] of SHF_EXECINSTR."""
-    shoff = struct.unpack(">I", data[32:36])[0]
-    shentsize, shnum = struct.unpack(">HH", data[46:50])
-    out = []
-    for i in range(shnum):
-        sh = data[shoff + i * shentsize: shoff + (i + 1) * shentsize]
-        _n, typ, flags, addr, off, size = struct.unpack(">IIIIII", sh[:24])
-        if typ == 1 and flags & 0x4 and size:          # PROGBITS, EXECINSTR
-            out.append((addr, off, size))
-    return out
+    return [(addr, off, size) for typ, flags, addr, off, size
+            in section_headers(data)
+            if typ == 1 and flags & 0x4 and size]       # PROGBITS, EXECINSTR
 
 
 def table_ranges(listing, data, secs):
@@ -169,12 +195,35 @@ def run_objdump(objdump, path, lo=None, hi=None):
     return r.stdout
 
 
+def without_ranges(listing, skip):
+    """The listing minus the instruction lines inside the skipped ranges."""
+    ranges = []
+    for s, e in sorted(skip):                   # merge overlapping ranges
+        if ranges and s <= ranges[-1][1]:
+            ranges[-1][1] = max(ranges[-1][1], e)
+        else:
+            ranges.append([s, e])
+    starts = [r[0] for r in ranges]
+    out = []
+    for raw in listing.splitlines():
+        m = LINE.match(raw)
+        if m:
+            a = int(m.group(1), 16) & 0xffffffff
+            i = bisect.bisect_right(starts, a) - 1
+            if i >= 0 and a < ranges[i][1]:
+                continue
+        out.append(raw)
+    return "\n".join(out) + "\n"
+
+
 def scan_elf(path, objdump):
     """-> (decoded_lines, hits, n_tables_skipped)
 
-    Whole-section listing first; then, if switch tables were found, decode
-    only the code BETWEEN them (so the stream re-synchronises after each
-    table) and repeat until no new table turns up.
+    Whole-section listing first; then, if switch tables were found, the
+    listing of a copy in which each table (and its dispatch filler) is NOP
+    words: decoding then re-synchronises at the end of every table, in one
+    objdump run, and the NOPs are dropped from the listing.  Repeated until no
+    new table turns up.
     """
     with open(path, "rb") as fp:
         data = fp.read()
@@ -184,15 +233,19 @@ def scan_elf(path, objdump):
     for _round in range(6):
         if not skip:
             break
-        listing = ""
-        for sa, _so, sz in secs:
-            lo, hi = sa, sa + sz
-            for s, e in sorted(r for r in skip if sa <= r[0] < hi):
-                if s > lo:
-                    listing += run_objdump(objdump, path, lo, s)
-                lo = max(lo, e)
-            if lo < hi:
-                listing += run_objdump(objdump, path, lo, hi)
+        patched = bytearray(data)
+        for sa, so, sz in secs:
+            for s, e in skip:
+                lo, hi = max(s, sa), min(e, sa + sz)
+                for a in range(lo, hi - 1, 2):
+                    patched[so + a - sa: so + a - sa + 2] = b"\x4e\x71"
+        fd, tmp = tempfile.mkstemp(prefix="scan060-nop.", suffix=".o")
+        try:
+            with os.fdopen(fd, "wb") as fp:
+                fp.write(patched)
+            listing = without_ranges(run_objdump(objdump, tmp), skip)
+        finally:
+            os.unlink(tmp)
         new = set(table_ranges(listing, data, secs)) - skip
         if not new:
             break
@@ -205,11 +258,7 @@ def has_symtab(path):
     """ELF32 big-endian -> does it carry a SHT_SYMTAB section?"""
     with open(path, "rb") as fp:
         data = fp.read()
-    shoff = struct.unpack(">I", data[32:36])[0]
-    shentsize, shnum = struct.unpack(">HH", data[46:50])
-    return any(struct.unpack(">I", data[shoff + i * shentsize + 4:
-                                         shoff + i * shentsize + 8])[0] == 2
-               for i in range(shnum))
+    return any(typ == 2 for typ, _f, _a, _o, _s in section_headers(data))
 
 
 def ar_members(path, tmp):
@@ -220,7 +269,12 @@ def ar_members(path, tmp):
     while pos + 60 <= len(data):
         hdr = data[pos:pos + 60]
         name = hdr[:16].rstrip()
-        size = int(hdr[48:58].strip() or b"0")
+        try:
+            size = int(hdr[48:58].strip() or b"0")
+        except ValueError:
+            raise Malformed("bad member size in the archive header at %d" % pos)
+        if pos + 60 + size > len(data):
+            raise Malformed("member at %d runs past the end" % pos)
         body = data[pos + 60: pos + 60 + size]
         pos += 60 + size + (size & 1)
         if name in (b"/", b"/SYM64/"):
@@ -230,7 +284,10 @@ def ar_members(path, tmp):
             continue
         if name.startswith(b"/") and name[1:].isdigit():
             off = int(name[1:])
-            name = names[off:names.index(b"\n", off)]
+            end = names.find(b"\n", off)
+            if end < 0:
+                raise Malformed("long member name %d not in the name table" % off)
+            name = names[off:end]
         name = name.rstrip(b"/").decode("ascii", "replace")
         if not is_m68k(body[:20]):
             continue
@@ -352,6 +409,17 @@ def self_test():
             ok = ok and res == "ok"
             print("  %-4s %-44s -> %s" % (res, what,
                   hits[0][4] if hits else "clean"))
+        # a truncated object is reported, not a traceback and not a pass
+        t = os.path.join(tmp, "trunc.o")
+        with open(os.path.join(tmp, "p0.o"), "rb") as fp, open(t, "wb") as out:
+            out.write(fp.read()[:200])
+        try:
+            scan_elf(t, objdump)
+            res = "FAIL"
+        except Malformed:
+            res = "ok"
+        ok = ok and res == "ok"
+        print("  %-4s %-44s -> %s" % (res, "truncated object", "malformed"))
     print("self-test: %s" % ("PASS" if ok else "FAIL"))
     return 0 if ok else 2
 
@@ -371,14 +439,26 @@ def main(argv):
     rc, n_elf, n_hit = 0, 0, 0
     with tempfile.TemporaryDirectory(prefix="scan060.") as tmp:
         for p in paths:
-            elfs = targets_of(p, tmp)
+            try:
+                elfs = targets_of(p, tmp)
+            except Malformed as e:
+                print("scan060: %s: NOT INSPECTED -- truncated or malformed: %s"
+                      % (p, e))
+                rc = 2
+                continue
             if not elfs:
                 print("scan060: %s: NOTHING INSPECTED -- no m68k ELF found; "
                       "that is not a pass" % p)
                 rc = 2
                 continue
             for label, e in elfs:
-                total, hits, ntab = scan_elf(e, objdump)
+                try:
+                    total, hits, ntab = scan_elf(e, objdump)
+                except Malformed as err:
+                    print("scan060: %s: NOT INSPECTED -- truncated or "
+                          "malformed: %s" % (label, err))
+                    rc = 2
+                    continue
                 n_elf += 1
                 if hits or not quiet:
                     verdict = "CLEAN" if not hits else "HITS %d" % len(hits)
