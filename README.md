@@ -71,8 +71,9 @@ $AMIX_ROOT/usr/ccs/lib/crtn.o
 ```
 
 `make deps-hint` lists the host packages the build needs (Debian/Ubuntu
-names): a C compiler that can build 32-bit programs (`gcc-multilib`), make,
-m4, bison, flex, texinfo, curl, patch, perl, python3 and bash; `make test-mul64-run` also needs `qemu-user` and
+names): a C compiler, an i686 one for gcc itself (`gcc-i686-linux-gnu` and
+`libc6-dev-i386-cross`, or `gcc-multilib`), make, m4, bison, flex, texinfo,
+curl, patch, perl, python3 and bash; `make test-mul64-run` also needs `qemu-user` and
 `gcc-m68k-linux-gnu`. make itself installs nothing on the host.
 
 Build and install, from the repository root:
@@ -526,8 +527,12 @@ rather than edit it.
 configure tests and sources expect pre-C99 implicit `int` behavior.
 
 gcc is configured for an i686 host, and its host configuration says `long`
-is 32 bits wide, so it is built as 32-bit code with `GCC_HOST_CC`
-(`$(HOST_CC) -m32`; Debian/Ubuntu need `gcc-multilib`). Built as 64-bit code,
+is 32 bits wide, so it is built as 32-bit code with `GCC_HOST_CC`: `gcc
+-m32` when that can link a program (Debian/Ubuntu: `gcc-multilib`), otherwise
+`i686-linux-gnu-gcc -static` (`gcc-i686-linux-gnu` and
+`libc6-dev-i386-cross`), which needs no 32-bit libraries to run and, unlike
+`gcc-multilib`, installs next to cross compilers such as `gcc-m68k-linux-gnu`.
+Built as 64-bit code,
 its preprocessor did `#if` arithmetic in 64 bits: `#if (1 << 31) < 0` was
 false where the native AMIX `cpp` says true. The build stops with a message
 if `GCC_HOST_CC` cannot build and run a 32-bit program; `make test-cpp32`

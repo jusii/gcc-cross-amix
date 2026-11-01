@@ -57,10 +57,17 @@ HOST_CFLAGS = -O2 -g -std=gnu89 -fcommon -no-pie
 # gcc is configured for an i686 host (BUILD, HOST), whose configuration says
 # long is 32 bits wide, so it is built as 32-bit code.  Built as 64-bit code,
 # cpp evaluated #if in a 64-bit long: "#if (1 << 31) < 0" was false, where the
-# native AMIX cpp says true.  Needs a multilib host compiler (Debian/Ubuntu:
-# gcc-multilib).  binutils is configured for the build machine itself and is
-# built with HOST_CC as it is.
-GCC_HOST_CC = $(HOST_CC) -m32
+# native AMIX cpp says true.  The default is "$(HOST_CC) -m32" when that can
+# link a program (Debian/Ubuntu: gcc-multilib), else the i686 cross compiler
+# linking statically (gcc-i686-linux-gnu and libc6-dev-i386-cross), which
+# needs no 32-bit libraries on the build machine and, unlike gcc-multilib,
+# can be installed next to cross compilers such as gcc-m68k-linux-gnu.
+# binutils is configured for the build machine itself and is built with
+# HOST_CC as it is.
+GCC_HOST_CC := $(shell if printf 'int main(void) { return 0; }\n' | \
+		$(HOST_CC) -m32 -x c -o /dev/null - >/dev/null 2>&1; then echo '$(HOST_CC) -m32'; \
+	elif command -v i686-linux-gnu-gcc >/dev/null 2>&1; then echo 'i686-linux-gnu-gcc -static'; \
+	else echo '$(HOST_CC) -m32'; fi)
 # __FILE__ in the binutils and gcc sources (assertion messages) would carry the
 # source and build directories into the installed binaries; map them away.
 HOST_PATH_CFLAGS := $(shell $(HOST_CC) -ffile-prefix-map=a=b -E -x c /dev/null >/dev/null 2>&1 && \
@@ -177,13 +184,15 @@ help:
 	@echo "  make CPUFLAGS=-m68030"
 
 # Build prerequisites.  make installs nothing on the host itself.
-DEPS_DEBIAN := build-essential gcc-multilib make m4 bison flex texinfo curl gzip tar \
-	patch file perl python3 bash
-DEPS_DEBIAN_TESTS := qemu-user gcc-m68k-linux-gnu
+DEPS_DEBIAN := build-essential gcc-i686-linux-gnu libc6-dev-i386-cross make m4 bison \
+	flex texinfo curl gzip tar patch file perl python3 bash
+DEPS_DEBIAN_TESTS := qemu-user gcc-m68k-linux-gnu libc6-dev-m68k-cross
 
 deps-hint:
 	@echo "Build prerequisites (Debian/Ubuntu package names):"
 	@echo "  $(DEPS_DEBIAN)"
+	@echo "(gcc-multilib instead of the two i686 packages also works, but it cannot be"
+	@echo "installed next to the m68k cross compiler test-mul64-run uses)"
 	@echo "make test-mul64-run also needs:"
 	@echo "  $(DEPS_DEBIAN_TESTS)"
 
@@ -433,7 +442,8 @@ $(GCC_BUILD)/config.status: $(GCC_SRC)/.amix-cross-extracted $(BINUTILS_INSTALL_
 	@printf 'int main(void) { return sizeof (long) != 4 || sizeof (char *) != 4; }\n' > $(GCC_BUILD)/host32.c
 	@$(GCC_HOST_CC) -o $(GCC_BUILD)/host32 $(GCC_BUILD)/host32.c 2>/dev/null && $(GCC_BUILD)/host32 || { \
 		echo "'$(GCC_HOST_CC)' cannot build and run a 32-bit program, and gcc must be one:" >&2; \
-		echo "install a multilib host compiler (Debian/Ubuntu: gcc-multilib), or name one with GCC_HOST_CC=..." >&2; \
+		echo "install gcc-i686-linux-gnu and libc6-dev-i386-cross, or gcc-multilib (Debian/Ubuntu)," >&2; \
+		echo "or name a 32-bit compiler with GCC_HOST_CC=..." >&2; \
 		exit 1; }
 	cd $(GCC_BUILD) && PATH="$(PATH_FOR_BUILD)" CC="$(GCC_HOST_CC)" CFLAGS="$(HOST_CFLAGS) $(HOST_PATH_CFLAGS)" $(GCC_SRC)/configure \
 		--build=$(BUILD) \
