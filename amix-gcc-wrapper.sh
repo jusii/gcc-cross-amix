@@ -19,11 +19,19 @@ common_cflags=(-I"$sysroot/usr/include")
 default_lib_dirs=("$sysroot/usr/lib")
 tmpfiles=()
 
+# Temporary files go on tmpfiles; the EXIT trap removes them.  The link step
+# runs ld as a child, not with exec, so the trap still runs after it, and an
+# interrupt exits (through the EXIT trap) instead of carrying on.
 cleanup()
 {
-	rm -f "${tmpfiles[@]}" 2>/dev/null || true
+	local f
+	for f in "${tmpfiles[@]}"; do
+		rm -f "${f:?}" 2>/dev/null || true
+	done
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 fix_asm()
 {
@@ -675,4 +683,4 @@ ld_cmd=("$ld" -o "$out" "${startfiles[@]}" \
 	${libgcc_a:+"$libgcc_a"} \
 	"${endfiles[@]}")
 test "$verbose" = no || echo " ${ld_cmd[*]}" >&2
-exec "${ld_cmd[@]}"
+"${ld_cmd[@]}"

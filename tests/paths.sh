@@ -87,5 +87,9 @@ else echo "  FAIL gcc -c changed a hand-written .s"; status=1; fi
 "$CC" $CPUFLAGS -S -o - probe.c | grep -q '\.ident.*"GCC: (GNU) ' ||
 	{ echo "  FAIL -S -o - does not print the compiler's .ident"; status=1; }
 
+left=$(ls "$TMPDIR" | wc -l)
+test "$left" -eq 0 && echo "  ok   no temporary file left behind" ||
+	{ echo "  FAIL $left temporary files left in $TMPDIR"; ls "$TMPDIR" | sed 's/^/         /'; status=1; }
+
 test $status -eq 0 && echo "test-paths PASS: .i, -S, -pipe, -save-temps, -x and links all get the repairs; .s left alone"
 exit $status
