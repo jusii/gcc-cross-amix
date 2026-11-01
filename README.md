@@ -15,7 +15,7 @@ GNU ld: works
 Target libgcc.a, ar and ranlib: built and installed
 Dynamically linked AMIX C executable: works on AMIX baremetal
 Kernel and driver objects: work
-Code generation: -m68020, -m68030, -m68040 (use -m68040 for a 68060)
+Code generation: -m68020, -m68030, -m68040, -m68060
 68060-safe integer code: by default (no 64-bit multiply or divide)
 Preprocessing (-E): works, so autoconf configure scripts can use it
 C++ / g++: not complete yet
@@ -298,8 +298,7 @@ MOVEP, CMP2, CHK2, CAS2
 GCC 2.7.2.3 emits the first of these for **every divide or modulo by a
 constant** (`x / 10`, `x % 1000`: the `smulsi3_highpart`/`umulsi3_highpart`
 patterns) and for `(unsigned long long) a * b`, at every optimisation level
-and every `-m680x0` flag; it has no `-m68060` and no option that avoids them.
-It emits none of the others. (A 64-bit-dividend divide used to appear through
+and every `-m680x0` flag up to `-m68040`. It emits none of the others. (A 64-bit-dividend divide used to appear through
 the SGS `tdivs` spelling; rule 2 fixed that.)
 
 So rule 11 rewrites each 64-bit multiply into 16x16 `mulu.w` partial products,
@@ -311,6 +310,14 @@ unchanged); keeps its 32 bytes of scratch above `%sp`; and leaves `%sp` where it
 found it. It costs 51 instructions and 130 bytes (63 and 158 for the signed
 form) where there was one 4-to-8-byte instruction, so code with these sites is
 larger, and slower on a 68020/030/040, which would have run the original.
+
+`-m68060` avoids the form at its source: it is `-m68040` with those
+multiply patterns turned off (a patch to `m68k.md`/`m68k.h` in `patches/`), so
+a divide or modulo by a constant is a 32-bit `divs.l`/`divu.l`, which the 68060
+implements, and `(unsigned long long) a * b` calls `__muldi3` in `libgcc.a`.
+Code for a 68060 is smaller and faster that way than with rule 11's expansion,
+which then has nothing left to do. `-m68060` code also runs on a 68020, 030 and
+040; `make test-mul64-run` runs it on a 68020 and a 68060 under qemu.
 
 After the rewrite the wrapper fails the compile if any 64-bit multiply or
 divide is still present, or an SGS `tdivs`/`tdivu` rule 2 did not rewrite. Such
@@ -457,17 +464,24 @@ AMIX_CRT_DIR=$SYSROOT/usr/ccs/lib
 specs pass the compile line's CPU flags to the assembler wrapper, which
 assembles for the last one -- `-m68000`/`-mc68000` for the 68000,
 `-m68020`/`-mc68020`/`-m68020-40` for the 68020, `-m68030`, `-m68040` or
-`-m68060` -- and for the 68020 when there is none. GCC
-2.7.2.3 itself has no `-m68060` (`cc1: Invalid option '68060'`), so code for a
-68060 is compiled with `-m68040`. The choice changes the opcodes emitted, so it
-is not just a validity check:
+`-m68060` -- and for the 68020 when there is none. The choice changes the
+opcodes emitted, so it is not just a validity check:
 
 - at `-m68020` gcc emits `FSGLMUL`/`FSGLDIV` for single-precision multiply and
   divide. The 68060 implements neither, so every one of them traps into the
   FPSP and is emulated.
 - at `-m68040` gcc emits `FSMUL`/`FSDIV` instead, which both the 040 and the 060
-  retire in hardware. `-m68040` is therefore the right choice for an 040 or 060
-  target.
+  retire in hardware. `-m68040` is therefore the right choice for an 040.
+- `-m68060` is `-m68040` without the 64-bit multiply (see "68060 Integer
+  Code"), the right choice for a 68060.
+
+Profiles, as the AMIX kernels and modules use them:
+
+```text
+68020/68030 kernel, its modules   CPUFLAGS=-m68020 (or -m68030)
+68040 kernel, its modules         CPUFLAGS=-m68040
+code that must run on a 68060     CPUFLAGS=-m68060, or -m68040 with rule 11
+```
 
 Because the emitted opcodes differ, do not mix objects built with different
 `CPUFLAGS` in one link.

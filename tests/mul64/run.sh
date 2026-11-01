@@ -61,5 +61,22 @@ for shape in "-O0" "-O" "-O2" "-O2 -fomit-frame-pointer" "-m68040 -O"; do
 	test -n "$ref" || ref=$k020
 	test "$k020" = "$ref" || { echo "FAIL $shape: differs from the first shape ($ref)"; status=1; }
 done
+# -m68060: the compiler emits no 64-bit multiply, so fix_asm expands only the
+# probe's own inline asm; the object must run on both CPUs with the 68020
+# checksum.  (u64)a*b becomes a call to __muldi3, which comes from this
+# toolchain's libgcc.a, as on AMIX: the Linux one uses the 64-bit multiply.
+AMIX_LIBGCC=$("$CC" -print-libgcc-file-name)
+for shape in "-m68060 -O" "-m68060 -O2"; do
+	tag=$(echo "$shape" | tr -d ' ' | tr -c 'A-Za-z0-9\n' _)
+	obj="$W/probe$tag.o"
+	"$CC" $shape -c "$HERE/probe.c" -o "$obj"
+	"$LCC" -m68060 -static -o "$W/run$tag" "$W/harness.o" "$obj" "$AMIX_LIBGCC"
+	r020=$("$QEMU" -cpu m68020 "$W/run$tag" 2>&1) || r020="exit $?"
+	r060=$("$QEMU" -cpu m68060 "$W/run$tag" 2>&1) || r060="exit $?"
+	printf '%-26s -m68060 code 020: %s\n' "$shape" "$r020"
+	printf '%-26s -m68060 code 060: %s\n' "" "$r060"
+	test "$r020" = "$ref" || { echo "FAIL $shape: -m68060 code on 68020 differs from $ref"; status=1; }
+	test "$r060" = "$ref" || { echo "FAIL $shape: -m68060 code on 68060 differs from $ref"; status=1; }
+done
 test $status -eq 0 && echo "test-mul64-run PASS: the expansion matches the 68020 and runs on the 68060"
 exit $status

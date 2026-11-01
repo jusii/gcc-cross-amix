@@ -262,8 +262,9 @@ fix_asm()
 	# smulsi3_highpart/umulsi3_highpart patterns -- and for (u64)a*b, at every
 	# optimisation level.  The 68020/030/040 execute it; the 68060 does not
 	# implement it and raises vector 61 ("unimplemented integer instruction"),
-	# which AMIX has no emulation for, so the process is killed.  gcc has no
-	# switch that avoids the form, so each such line becomes an equivalent
+	# which AMIX has no emulation for, so the process is killed.  Short of
+	# -m68060 (which turns the patterns off) gcc has no switch that avoids the
+	# form, so each such line becomes an equivalent
 	# sequence of 16x16 "mulu.w" partial products that every 680x0 from the
 	# 68020 up executes.  The sequence
 	#

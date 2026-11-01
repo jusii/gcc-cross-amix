@@ -32,6 +32,21 @@ for shape in "-O0" "-O" "-O2" "-m68040 -O"; do
 	cmp -s "$W/p$tag.o" "$W/p$tag-noflag.o" || fail "$shape: -mno-mul64 does not override AMIX_MUL64=keep"
 done
 
+# 1b. -m68060: the compiler itself emits no 64-bit multiply (the patterns are
+#     off).  With the expansion off, the only 64-bit forms left are the two the
+#     probe writes in inline asm (ccr_mulu, ccr_muls); with it on, none.
+for shape in "-m68060 -O0" "-m68060 -O" "-m68060 -O2"; do
+	tag=$(echo "$shape" | tr -d ' ' | tr -c 'A-Za-z0-9\n' _)
+	AMIX_MUL64=keep "$CC" $shape -c "$HERE/probe.c" -o "$W/p$tag-keep.o"
+	"$SCAN" "$W/p$tag-keep.o" > "$W/keep60.scan" || true
+	if grep -- '-- 64-bit' "$W/keep60.scan" | grep -v '<ccr_mul[su]>' | grep -q .; then
+		fail "$shape: the compiler emitted a 64-bit multiply under -m68060"
+	fi
+	test "$(grep -c -- '-- 64-bit' "$W/keep60.scan")" -eq 2 || fail "$shape: expected the 2 inline-asm 64-bit forms"
+	"$CC" $shape -c "$HERE/probe.c" -o "$W/p$tag.o"
+	"$SCAN" --quiet "$W/p$tag.o" || fail "$shape: 68060-unimplemented instruction left"
+done
+
 # 2. code without the 64-bit form is byte-identical either way
 cat > "$W/plain.c" <<'EOF'
 int smod(int a, int b) { return a % b; }
