@@ -153,6 +153,10 @@ The wrapper also handles the cases a real build runs into:
   `values-Xc.o` with `-ansi`), as the native `cc` does. It sets
   `_lib_version`, which selects the C library's behaviour, libm's error
   handling among it; without it every program ran as `-Xt`.
+- gcc's own headers (`stdarg.h`, `stddef.h`, `varargs.h`, `limits.h`,
+  `iso646.h`, ...) are installed in `lib/gcc-lib/m68k-cbm-sysv4/2.7.2.3/include`.
+  The preprocessor searches them after every `-I` directory, and the sysroot's
+  `usr/include` comes first, so they only serve a header the AMIX tree lacks.
 - The installed `libgcc.a` is appended to every link, so the soft-arithmetic
   helpers (`__udivdi3`, `__umoddi3`, `__lshrdi3`, the DImode/float conversions)
   resolve without an explicit `-lgcc`.

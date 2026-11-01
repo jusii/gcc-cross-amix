@@ -27,7 +27,12 @@ GCC_URL = $(GNU_BASE)/gcc/$(GCC_TARBALL)
 BINUTILS_CONFIGURE_EXTRA =
 GCC_CONFIGURE_EXTRA =
 BINUTILS_DISABLE_DIRS =
-GCC_BUILD_TARGETS = xgcc cc1 cccp
+# stmp-int-hdrs: gcc's own headers (stdarg.h, stddef.h, varargs.h, limits.h,
+# ...), installed in GCC_LIBDIR/include.  cpp searches them after every -I
+# directory, and the wrapper puts the sysroot's usr/include first, so they
+# only serve a header the AMIX tree does not have.  (float.h needs a run of
+# enquire on the target and is the sysroot's.)
+GCC_BUILD_TARGETS = xgcc cc1 cccp stmp-int-hdrs
 GCC_FULL_BUILD_TARGETS = LANGUAGES="c c++" all
 
 HERE := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
@@ -446,6 +451,8 @@ $(GCC_INSTALL_STAMP): $(GCC_STAMP)
 	cp $(GCC_BUILD)/xgcc $(GCC_REAL)
 	cp $(GCC_BUILD)/cc1 $(GCC_LIBDIR)/cc1
 	cp $(GCC_BUILD)/cccp $(GCC_LIBDIR)/cpp
+	mkdir -p $(GCC_LIBDIR)/include
+	cp $(GCC_BUILD)/include/*.h $(GCC_LIBDIR)/include/
 	$(HOST_STRIP) $(GCC_REAL) $(GCC_LIBDIR)/cc1 $(GCC_LIBDIR)/cpp
 	PATH="$(PATH_FOR_BUILD)" $(GCC_BUILD)/xgcc -B$(GCC_BUILD)/ -dumpspecs > $(GCC_LIBDIR)/specs.amix-tmp
 	$(call fix_specs,$(GCC_LIBDIR)/specs.amix-tmp,$(GCC_LIBDIR)/specs)
