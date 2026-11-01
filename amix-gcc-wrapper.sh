@@ -16,7 +16,12 @@ crt_dir="${AMIX_CRT_DIR:-$sysroot/usr/ccs/lib}"
 export GCC_EXEC_PREFIX="$prefix/lib/gcc-lib/"
 
 common_cflags=(-I"$sysroot/usr/include")
-default_lib_dirs=("$sysroot/usr/lib")
+# Library search, as the native cc's: /usr/lib and /usr/ccs/lib.  /usr/lib is
+# searched first, so every library it holds resolves as it always did; the
+# static libraries only /usr/ccs/lib has (libm.a, libgen.a, libcurses.a, libl.a,
+# ...) resolve too.  The native order is the other way round, but no library
+# is in both.
+default_lib_dirs=("$sysroot/usr/lib" "$sysroot/usr/ccs/lib")
 tmpfiles=()
 
 # Temporary files go on tmpfiles; the EXIT trap removes them.  The link step
@@ -653,8 +658,17 @@ done
 # after the user's libraries (so their libc references still resolve) means an
 # explicit trailing -lc is no longer required; a redundant one is harmless.
 # -nostdlib leaves out libc and libgcc.a, as with gcc.
+#
+# The native cc links -lc as /usr/ccs/lib/libc.so, an archive holding
+# libc.so.1 and the parts of the C library that are not in it, static only
+# (_fpsetround, select, syslog, ...: libm.a and libsocket.so need them).  GNU
+# ld records the dependency only from libc.so.1 named by itself, so that goes
+# first and the archive after it: ld takes from the archive just the members
+# that define a symbol still undefined, and a program that links without them
+# links to the same bytes either way.
 if test "$nostdlib" = no; then
 	resolved_libs+=("$(resolve_lib c)")
+	test ! -f "$sysroot/usr/ccs/lib/libc.so" || resolved_libs+=("$sysroot/usr/ccs/lib/libc.so")
 else
 	libgcc_a=
 fi
@@ -670,6 +684,16 @@ if test "$nostdlib" = no && test "$nostartfiles" = no; then
 		}
 	done
 	startfiles=("$crt_dir/crt1.o" "$crt_dir/crti.o")
+	# values-X?.o sets _lib_version, which selects the C library's behaviour
+	# (libm's error handling among it), by the same rule as the native cc and
+	# gcc's own specs for this target: values-Xc.o with -ansi, else
+	# values-Xt.o with -traditional, else values-Xa.o.  It used to be left
+	# out, so every program ran as c_issue_4 whatever it was compiled as.
+	values=values-Xa.o
+	for f in "${compile_flags[@]}"; do
+		case "$f" in -traditional) test "$values" = values-Xc.o || values=values-Xt.o ;; -ansi) values=values-Xc.o ;; esac
+	done
+	test ! -f "$crt_dir/$values" || startfiles+=("$crt_dir/$values")
 	endfiles=("$crt_dir/crtn.o")
 fi
 

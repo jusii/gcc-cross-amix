@@ -142,6 +142,17 @@ The wrapper also handles the cases a real build runs into:
   it and the link failed on `crt1.o`'s own references (`atexit`, `exit`,
   `_environ`, `__fpstart`). A trailing `-lc` is no longer needed; a redundant
   one is harmless.
+- Libraries are searched in the sysroot's `usr/lib`, then `usr/ccs/lib`, so
+  `-lm` (`libm.a`), `-lgen`, `-lcurses` and the other static libraries there
+  resolve. After `libc.so.1` the link also names `usr/ccs/lib/libc.so`, the
+  archive the native `cc` links as `-lc`: it holds the parts of the C library
+  that are not in `libc.so.1` (`_fpsetround`, which `libm.a` needs, `select`,
+  `syslog`), and `ld` takes from it only members that define a symbol still
+  undefined. The program still depends on `/usr/lib/libc.so.1` alone.
+- `values-Xa.o` is linked after `crti.o` (`values-Xt.o` with `-traditional`,
+  `values-Xc.o` with `-ansi`), as the native `cc` does. It sets
+  `_lib_version`, which selects the C library's behaviour, libm's error
+  handling among it; without it every program ran as `-Xt`.
 - The installed `libgcc.a` is appended to every link, so the soft-arithmetic
   helpers (`__udivdi3`, `__umoddi3`, `__lshrdi3`, the DImode/float conversions)
   resolve without an explicit `-lgcc`.
