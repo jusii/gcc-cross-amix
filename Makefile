@@ -93,6 +93,9 @@ LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 
 .PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc gcc-full install-gcc-wrapper refresh-gcc-wrapper install-target-ar libgcc install-libgcc env test-random test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir test-dtneeded test-kernel-volatile test-user-volatile test-mul64 test-mul64-run test-scan060 print-vars clean distclean
 
+# A recipe that fails part-way never leaves its target behind looking finished.
+.DELETE_ON_ERROR:
+
 all: install-binutils sysroot install-gcc install-gcc-wrapper install-target-ar install-libgcc env
 
 help:
@@ -158,11 +161,35 @@ download: $(DISTDIR)/$(BINUTILS_TARBALL) $(DISTDIR)/$(GCC_TARBALL)
 $(DISTDIR):
 	mkdir -p $@
 
+# Every distfile has a pinned SHA-256 in distfiles.sha256.  A download goes to
+# a temporary name and gets its real name only once its digest matches, so an
+# interrupted or tampered download never looks like a finished one; a distfile
+# that is already present is checked again before it is extracted.
+DISTFILES_SHA256 := $(HERE)/distfiles.sha256
+
+# $(call check_distfile,FILE,NAME): FILE's SHA-256 must be the one pinned for NAME
+define check_distfile
+	@f='$(1)'; n='$(2)'; \
+	want=$$(awk -v n="$$n" '$$2 == n { print $$1 }' '$(DISTFILES_SHA256)'); \
+	test -n "$$want" || { echo "No pinned SHA-256 for $$n in $(DISTFILES_SHA256)" >&2; exit 1; }; \
+	got=$$(sha256sum "$$f" | cut -d' ' -f1); \
+	test "$$got" = "$$want" || { echo "SHA-256 mismatch for $$f: got $$got, want $$want" >&2; exit 1; }; \
+	echo "ok   $$n SHA-256 $$got"
+endef
+
+# $(call fetch_distfile,URL): download URL to $@ through $@.tmp
+define fetch_distfile
+	@f='$@'; rm -f "$${f:?}.tmp"; \
+	{ curl -fsSL --retry 3 -o "$$f.tmp" '$(1)' || wget -O "$$f.tmp" '$(1)'; } || { rm -f "$${f:?}.tmp"; exit 1; }
+	$(call check_distfile,$@.tmp,$(notdir $@))
+	@f='$@'; mv "$${f:?}.tmp" "$$f"
+endef
+
 $(DISTDIR)/$(BINUTILS_TARBALL): | $(DISTDIR)
-	curl -L -o $@ $(BINUTILS_URL) || wget -O $@ $(BINUTILS_URL)
+	$(call fetch_distfile,$(BINUTILS_URL))
 
 $(DISTDIR)/$(GCC_TARBALL): | $(DISTDIR)
-	curl -L -o $@ $(GCC_URL) || wget -O $@ $(GCC_URL)
+	$(call fetch_distfile,$(GCC_URL))
 
 extract: $(BINUTILS_SRC)/.amix-cross-extracted $(GCC_SRC)/.amix-cross-extracted
 
@@ -170,6 +197,7 @@ $(SRCDIR):
 	mkdir -p $@
 
 $(BINUTILS_SRC)/.amix-cross-extracted: $(DISTDIR)/$(BINUTILS_TARBALL) | $(SRCDIR)
+	$(call check_distfile,$(DISTDIR)/$(BINUTILS_TARBALL),$(BINUTILS_TARBALL))
 	rm -rf $(BINUTILS_SRC)
 	rm -rf $(BINUTILS_BUILD)
 	cd $(SRCDIR) && tar -xzf $(DISTDIR)/$(BINUTILS_TARBALL)
@@ -179,6 +207,7 @@ $(BINUTILS_SRC)/.amix-cross-extracted: $(DISTDIR)/$(BINUTILS_TARBALL) | $(SRCDIR
 	touch $@
 
 $(GCC_SRC)/.amix-cross-extracted: $(DISTDIR)/$(GCC_TARBALL) | $(SRCDIR)
+	$(call check_distfile,$(DISTDIR)/$(GCC_TARBALL),$(GCC_TARBALL))
 	rm -rf $(GCC_SRC)
 	rm -rf $(GCC_BUILD)
 	cd $(SRCDIR) && tar -xzf $(DISTDIR)/$(GCC_TARBALL)
