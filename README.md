@@ -21,7 +21,8 @@ Preprocessing (-E): works, so autoconf configure scripts can use it
 C++: not built (C only)
 ```
 
-`CHANGELOG.md` records the fixes behind that list.
+`CHANGELOG.md` records the fixes behind that list. The repository has no
+licence file yet; `LICENSING-STATUS.md` records who wrote which parts.
 
 The compiler installed as `m68k-cbm-sysv4-gcc` is a wrapper script, not the
 compiler binary. Every assembly GCC produces is repaired before it is assembled; see
