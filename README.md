@@ -342,9 +342,11 @@ AMIX_SCAN060=1 make CC=m68k-cbm-sysv4-gcc
 
 Each gate below checks the *emitted encoding*, not merely that the file
 assembled -- a mangled offset or a reversed compare assembles just as quietly.
-Run all of them after any change to `fix_asm`.
+Each is a script in `tests/`. `make check` runs all of them except
+`test-mul64-run`; run it after any change to the wrapper.
 
 ```text
+make check           every gate below except test-mul64-run
 make test-divmod     divides use the 32-bit-dividend divsll/divull (rule 2)
 make test-float      register-to-register fsgldiv/fsglmul are .x, memory
                      and data-register forms untouched (rule 3)
@@ -352,8 +354,9 @@ make test-fcmp       the fcmp destination is the register the fmul wrote,
                      i.e. the compare sense survived (rule 6)
 make test-bitfield   bit-field offset and width survive as extension-word
                      bits 10:6 and 4:0, register-select bits clear (rule 4)
-make test-uint64     64-bit / % and >> link, with __udivdi3 __umoddi3
-                     __lshrdi3 resolved from the installed libgcc.a
+make test-uint64     64-bit / % and >> and the float to (unsigned) long
+                     long conversions link, every helper resolved from the
+                     installed libgcc.a
 make test-objdir     -c with no -o writes ./basename.o into the working
                      directory and leaves the source directory clean, for
                      .c, .s and .S alike, while an explicit -o is still
@@ -367,6 +370,11 @@ make test-kernel-volatile
 make test-user-volatile
                      under AMIX_USER_CFLAGS, a volatile register poll
                      re-reads memory and a const table is read-only data
+make test-kernel-object
+                     stock AMIX drivers (usr/sys/amiga/driver) compile
+                     under AMIX_KERNEL_CFLAGS to m68k ELF relocatables that
+                     define the same global symbols as the native objects
+                     shipped beside them, and pass the 68060 scanner
 make test-mul64      no 68060-unimplemented instruction in the probe at
                      -O0/-O/-O2/-m68040; AMIX_MUL64=keep still has the
                      64-bit form and -mmul64 matches it byte for byte; code
@@ -389,21 +397,21 @@ with `objdump`, so they need only the installed wrapper; `test-objdir` likewise
 needs nothing but the wrapper. `test-uint64` and `test-dtneeded` link, so like
 `test-hello` they need the AMIX crt objects and `libc.so.1` in the sysroot;
 `test-dtneeded` additionally needs `libsocket.so` and `libnsl.so` there.
-`test-kernel-volatile` needs the AMIX headers (`AMIX_ROOT`), and
-`test-user-volatile` needs them in the sysroot (`SYSROOT`); see below.
+`test-kernel-volatile` and `test-kernel-object` need the AMIX tree
+(`AMIX_ROOT`), and `test-user-volatile` needs its headers in the sysroot
+(`SYSROOT`); see below.
 `test-mul64` and `test-scan060` need only the wrapper and Python 3.
 `test-mul64-run` also needs `qemu-m68k` and a Linux m68k cross gcc
 (`m68k-linux-gnu-gcc`, or set `LINUX_M68K_CC`); its probe and harness live in
 `tests/mul64/`.
 
-The gates test an installed toolchain, so run `make all` first. They reinstall
-only the wrapper script (`make refresh-gcc-wrapper`), so an edit to
-`amix-gcc-wrapper.sh` is picked up, but they never reconfigure gcc or reinstall
-binutils, which would replace the `ar`/`ranlib` wrappers from
-`make install-target-ar`. `test-uint64` still rebuilds and reinstalls
-`libgcc.a`, and `test-dtneeded` still runs the `sysroot` copy.
+The gates need an installed toolchain, so run `make all` first. They do not
+test it in place: `make stage` builds `build/stage/`, a prefix holding the
+working copy's wrapper and scanner and links to the installed compiler,
+binutils and `libgcc.a`, and every gate runs that copy. An edit to the wrapper
+is tested without touching the compiler in `PREFIX` that other builds use.
 
-Every gate first runs `make sysroot-check`, which fails unless
+Staging first runs `make sysroot-check`, which fails unless
 `$SYSROOT/usr/lib/libc.so.1` is an ELF shared object; the generated `env.sh`
 makes the same check when sourced. `make sysroot` leaves the stock files it
 copies read-only (directories stay writable for added libraries) and lifts
@@ -502,10 +510,11 @@ Build and test a C hello binary on AMIX before working on `gcc-full` / C++.
 
 ## Kernel And Driver Objects
 
-Example:
+`make test-kernel-object` compiles stock drivers from the AMIX tree with
+`AMIX_KERNEL_CFLAGS` and checks them against the native objects:
 
 ```sh
-make AMIX_ROOT=$HOME/src/usr-amix CPUFLAGS=-m68030 test-random
+make AMIX_ROOT=$HOME/src/usr-amix test-kernel-object
 ```
 
 ### Kernel CFLAGS: -traditional and volatile
@@ -571,18 +580,6 @@ Kernel and driver builds also need the old AMIX compiler dialect flags:
 ```make
 CFLAGS += -traditional -fno-builtin -Dinline=__inline__
 ```
-
-## Expected First Test
-
-After `make test-random`, the output object should resemble the native AMIX
-driver objects:
-
-```text
-ELF 32-bit MSB relocatable M68000 Version 1
-```
-
-Then copy `build/test/random.o` to the Amiga and try the native AMIX link, or
-continue toward `test-hello` for Linux-side executable linking.
 
 ## Source URLs
 
