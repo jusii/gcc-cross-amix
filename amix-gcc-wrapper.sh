@@ -180,6 +180,13 @@ fix_asm()
 	#
 	# The split is parenthesis-aware because memory operands contain
 	# commas of their own, e.g. "fcmp.s 4(%a0,%d0.l),%fp1".
+	#
+	# cc1 spells CMPA, CMPI and CMPM as "cmp" (sgs.h ASM_OUTPUT_OPCODE), and
+	# does the same to an inline asm line that begins with the mnemonic.  An
+	# inline asm line that begins with white space keeps "cmpm.l", "cmpa.l"
+	# or "cmpi.l" as written -- in the same SGS operand order -- so those are
+	# swapped too; otherwise "cmpm.l (%a1)+,(%a0)+" compared the other way
+	# round from "cmp.l (%a1)+,(%a0)+".  ("make test-cmpm" gates this.)
 	perl -0pi -e '
 		# Rule 6 must not run twice on one file (a second swap undoes the
 		# first); fix_asm marks a file it has repaired, below.  Every other
@@ -198,7 +205,7 @@ fix_asm()
 			}
 			return;
 		}
-		s{^(\s*(?:cmp\.[bwl]|fcmp\.[bwlsdxp])\s+)([^\n]+)$}{
+		s{^(\s*(?:cmp[aim]?\.[bwl]|fcmp\.[bwlsdxp])\s+)([^\n]+)$}{
 			my ($prefix, $ops) = ($1, $2);
 			my ($left, $right) = split_operands($ops);
 			defined $right ? "$prefix$right,$left" : "$prefix$ops";
