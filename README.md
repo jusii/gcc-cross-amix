@@ -140,10 +140,18 @@ Copy the executable to AMIX and run it there.
 
 The wrapper also handles the cases a real build runs into:
 
-- `-E` preprocesses and does not link. It is dispatched to the real cross
-  compiler with the target include path, exactly as `-S` is. Before that,
-  `-E` fell through to the link path: `m68k-cbm-sysv4-gcc -E foo.c` compiled and
-  linked instead of preprocessing and printed nothing on stdout.
+- `-E` (and `-M`, `-MM`) preprocesses and does not link. It is handed to the
+  real cross compiler with the target include path. Before that, `-E` fell
+  through to the link path: `m68k-cbm-sysv4-gcc -E foo.c` compiled and linked
+  instead of preprocessing and printed nothing on stdout.
+- Options go where they belong: linker options are an explicit list (`-Wl,`,
+  `-Xlinker`, `-u`, `-e`, `-T`, `-h`, `-z`, `-s`, `-r`, `-static`, `-shared`,
+  `-G`, `-dn`/`-dy`, `-B...`) and every other option goes to the compiler, so an
+  option gcc does not know is reported by gcc. Questions to the driver
+  (`-dumpversion`, `-print-libgcc-file-name`, ...) are answered and nothing is
+  linked; `-x <language>` applies in a link too; `-nostdlib`, `-nostartfiles`
+  and `-v` do what they do with gcc. (Unknown options used to be handed to
+  `ld`.) `make test-options` gates this.
 - An archive or shared library named on the command line is linked *after* the
   objects. `m68k-cbm-sysv4-gcc prog.c libfoo.a` used to link as
   `libfoo.a prog.o`, and single-pass `ld`, meeting the archive with nothing yet
@@ -205,8 +213,8 @@ The wrapper also handles the cases a real build runs into:
   `ld: cannot open foo.o: No such file or directory`, with stray objects left
   behind in the source tree.
 
-  For `.s`/`.S` inputs the same missing `-o` was worse, because those are
-  passed to the real compiler rather than assembled by the wrapper: it forwarded
+  For `.s`/`.S` inputs the same missing `-o` was worse, because those were
+  passed to the real compiler on their own path: the wrapper forwarded
   an *empty* `-o`, which `gcc 2.7.2.3` drops from the command line it builds, so
   the assembler ran as `as -V -Qy -o ../src/foo.s` -- the file that should have
   been the input became the output. In a non-interactive build `as` then read an
