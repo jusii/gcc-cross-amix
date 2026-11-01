@@ -454,8 +454,10 @@ AMIX_CRT_DIR=$SYSROOT/usr/ccs/lib
 ```
 
 `CPUFLAGS` selects the assembler architecture as well as code generation. The
-wrapper scans the compile line for `-m68030`, `-m68040` or `-m68060` and passes
-the same flag to `as`; with none of them present it assembles `-m68020`. GCC
+specs pass the compile line's CPU flags to the assembler wrapper, which
+assembles for the last one -- `-m68000`/`-mc68000` for the 68000,
+`-m68020`/`-mc68020`/`-m68020-40` for the 68020, `-m68030`, `-m68040` or
+`-m68060` -- and for the 68020 when there is none. GCC
 2.7.2.3 itself has no `-m68060` (`cc1: Invalid option '68060'`), so code for a
 68060 is compiled with `-m68040`. The choice changes the opcodes emitted, so it
 is not just a validity check:

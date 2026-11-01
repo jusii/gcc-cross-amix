@@ -50,6 +50,11 @@ else grep -q 'cc1' f.err && ok "an unknown option is reported by the compiler, n
 	ok "-nostdlib links no startup objects and no libc" || bad "-nostdlib"
 "$CC" $CPUFLAGS -v -include inc.h -o prog8 prog.c 2> v.err && grep -q -- '-ld -o prog8' v.err &&
 	ok "-v shows the ld command" || bad "-v did not show the link"
+printf 'int bf(unsigned x) { unsigned n; __asm__("bfextu %%1{&3:&5},%%0" : "=d"(n) : "d"(x)); return n; }\n' > bf.c
+"$CC" -m68020 -O -c bf.c -o bf20.o && "$CC" -mc68020 -O -c bf.c -o bfc20.o && cmp -s bf20.o bfc20.o &&
+	ok "-mc68020 assembles as -m68020" || bad "-mc68020 differs from -m68020"
+if "$CC" -m68000 -O -c bf.c -o bf00.o 2> bf.err; then bad "-m68000 assembled a 68020 bit-field instruction"
+else ok "-m68000 reaches the assembler (a 68020 bfextu is refused)"; fi
 
 test $status -eq 0 && echo "test-options PASS: linker options to ld, compiler options to the compiler, queries answered"
 exit $status

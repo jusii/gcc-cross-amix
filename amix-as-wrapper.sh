@@ -12,9 +12,12 @@
 #
 # Options from the driver: -o and the input file are kept; -Qy/-Qn (SVR4 "add
 # an .ident" flags GNU as ignores) are dropped; the -m680x0 flags the specs pass
-# choose the assembler architecture -- the last of -m68030, -m68040 or -m68060,
-# else -m68020 -- and are not passed on otherwise.  Everything else (-V, the
-# -Wa,<option> list) goes to GNU as unchanged.
+# choose the assembler architecture and are not passed on otherwise.  The last
+# CPU flag wins, as it does for the compiler: -m68000/-mc68000 assemble for the
+# 68000, -m68020/-mc68020/-m68020-40 for the 68020, -m68030, -m68040 and
+# -m68060 for those; with none, -m68020.  (Only -m68030/-m68040/-m68060 used
+# to count, so -m68000 code was assembled as 68020 code.)  Everything else
+# (-V, the -Wa,<option> list) goes to GNU as unchanged.
 set -e
 
 target="@TARGET@"
@@ -43,6 +46,12 @@ while test $# -gt 0; do
 			test $# -gt 1 || { echo "amix as wrapper: -o needs an argument" >&2; exit 1; }
 			out=$2
 			shift
+			;;
+		-m68000|-mc68000)
+			asarch=-m68000
+			;;
+		-m68020|-mc68020|-m68020-40)
+			asarch=-m68020
 			;;
 		-m68030|-m68040|-m68060)
 			asarch=$1
