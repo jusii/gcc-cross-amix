@@ -138,7 +138,7 @@ LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 	_fixsfdi _fixxfdi _fixunsxfdi _fixunsdfsi _fixunssfsi _fixunsxfsi \
 	__gcc_bcmp _clear_cache _shtab _trampoline
 
-.PHONY: all help deps-hint download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc install-gcc-wrapper install-target-ar libgcc install-libgcc env stage check test-hello test-uint64 test-cpp32 test-divmod test-float test-fcmp test-cmpm test-bitfield test-lcomm test-objdir test-paths test-options test-link test-dtneeded test-kernel-volatile test-user-volatile test-kernel-object test-mul64 test-mul64-run test-scan060 print-vars clean distclean
+.PHONY: all help deps-hint download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc install-gcc-wrapper install-target-ar libgcc install-libgcc env stage check test-hello test-uint64 test-cpp32 test-divmod test-float test-fcmp test-cmpm test-bitfield test-lcomm test-objdir test-paths test-options test-asopts test-link test-dtneeded test-kernel-volatile test-user-volatile test-kernel-object test-mul64 test-mul64-run test-scan060 print-vars clean distclean
 
 # A recipe that fails part-way never leaves its target behind looking finished.
 .DELETE_ON_ERROR:
@@ -170,6 +170,7 @@ help:
 	@echo "  make test-bitfield   Bit-field offset/width survive as extension-word bits 10:6 and 4:0"
 	@echo "  make test-uint64     64-bit / % >> and float conversions link from libgcc.a"
 	@echo "  make test-objdir     '-c' with no '-o' writes ./basename.o, not beside the source"
+	@echo "  make test-asopts     -Wa,--defsym,SYM=1 and -Wa,-I,dir reach as with their values"
 	@echo "  make test-dtneeded   DT_NEEDED names resolve on the guest, not on the build host"
 	@echo "  make test-kernel-volatile  spl()/splx() and MMIO volatile survive AMIX_KERNEL_CFLAGS"
 	@echo "  make test-user-volatile    volatile polls and const data survive AMIX_USER_CFLAGS"
@@ -607,7 +608,7 @@ STAGE_CC := $(STAGE)/bin/$(TARGET)-gcc
 TEST_ENV = CC='$(STAGE_CC)' CPUFLAGS='$(CPUFLAGS)' SYSROOT='$(SYSROOT)' \
 	AMIX_SYSROOT='$(SYSROOT)' AMIX_CRT_DIR='$(AMIX_CRT_DIR)' AMIX_ROOT='$(AMIX_ROOT)' \
 	AMIX_KERNEL_CFLAGS='$(AMIX_KERNEL_CFLAGS)' AMIX_USER_CFLAGS='$(AMIX_USER_CFLAGS)'
-CHECK_GATES := cpp32 divmod float fcmp cmpm bitfield lcomm objdir paths options link uint64 dtneeded kernel-volatile \
+CHECK_GATES := cpp32 divmod float fcmp cmpm bitfield lcomm objdir paths options asopts link uint64 dtneeded kernel-volatile \
 	user-volatile kernel-object mul64 scan060
 
 stage: sysroot-check
@@ -622,7 +623,7 @@ stage: sysroot-check
 	$(call fix_specs,$(GCC_LIBDIR)/specs,$(STAGE_LIBDIR)/specs)
 	$(call install_gcc_wrapper,$(STAGE))
 
-$(addprefix test-,cpp32 divmod float fcmp cmpm bitfield lcomm objdir paths options link uint64 dtneeded kernel-volatile user-volatile kernel-object): test-%: stage
+$(addprefix test-,cpp32 divmod float fcmp cmpm bitfield lcomm objdir paths options asopts link uint64 dtneeded kernel-volatile user-volatile kernel-object): test-%: stage
 	$(TEST_ENV) W='$(BUILDDIR)/test/$*' sh $(HERE)/tests/$*.sh
 
 test-dtneeded: check-runtime

@@ -17,7 +17,9 @@
 # 68000, -m68020/-mc68020/-m68020-40 for the 68020, -m68030, -m68040 and
 # -m68060 for those; with none, -m68020.  (Only -m68030/-m68040/-m68060 used
 # to count, so -m68000 code was assembled as 68020 code.)  Everything else
-# (-V, the -Wa,<option> list) goes to GNU as unchanged.
+# (-V, the -Wa,<option> list) goes to GNU as unchanged, an option that takes a
+# value together with it (-Wa,--defsym,SYM=1 and -Wa,-I,dir are an option and
+# its value, not a second input).
 set -e
 
 target="@TARGET@"
@@ -36,38 +38,119 @@ trap 'exit 143' TERM
 
 @FIX_ASM@
 
+# GNU as 2.8.1 reads its options with getopt_long_only (gas/as.c, with the
+# m68k ELF additions from gas/config/tc-m68k.c), and so does this loop, so an
+# option's value is never taken for an input file:
+#   - short options with a value: -I -o -A -m -Q, the value attached (-Idir)
+#     or the next word (-I dir); -a's value is optional and only attached;
+#   - long options with a value: --defsym --emulation --itbl, as --opt=val or
+#     --opt val, also with one dash and abbreviated (-defsym, --def);
+#   - every long option is listed so abbreviations resolve as as resolves them.
+as_long_opts="help mri nocpp statistics version dump-config verbose emulation
+defsym itbl pic register-prefix-optional bitwise-or base-size-default-16
+base-size-default-32 disp-size-default-16 disp-size-default-32"
+as_short_opts=JKLMRWZfaDIovwXtlSAmkQV
+
+# as_long NAME: set aslong to the long option NAME selects (exact, or the one
+# option it abbreviates), "?" if it abbreviates several, empty if none.
+as_long()
+{
+	local o n=0
+	aslong=
+	for o in $as_long_opts; do
+		if test "$o" = "$1"; then aslong=$o; return; fi
+		case "$o" in "$1"*) aslong=$o; n=$((n + 1)) ;; esac
+	done
+	test $n -le 1 || aslong="?"
+}
+
+# as_arch OPTION: an -m option (-m<value>): CPU flags choose the assembler
+# architecture, the last one winning; any other -m flag is dropped.
+as_arch()
+{
+	case "$1" in
+		-m68000|-mc68000) asarch=-m68000 ;;
+		-m68020|-mc68020|-m68020-40) asarch=-m68020 ;;
+		-m68030|-m68040|-m68060) asarch=$1 ;;
+	esac
+}
+
 asarch=-m68020
 asargs=()
 out=
 input=
 while test $# -gt 0; do
 	case "$1" in
-		-o)
-			test $# -gt 1 || { echo "amix as wrapper: -o needs an argument" >&2; exit 1; }
-			out=$2
-			shift
-			;;
-		-m68000|-mc68000)
-			asarch=-m68000
-			;;
-		-m68020|-mc68020|-m68020-40)
-			asarch=-m68020
-			;;
-		-m68030|-m68040|-m68060)
-			asarch=$1
-			;;
-		-m*|-Qy|-Qn)
-			;;
 		-)
 			input=-
+			shift
+			continue
 			;;
-		-*)
-			asargs+=("$1")
-			;;
+		-*) ;;
 		*)
 			test -z "$input" || { echo "amix as wrapper: more than one input ($input, $1)" >&2; exit 1; }
 			input=$1
+			shift
+			continue
 			;;
+	esac
+	# a long option: "--name", or "-name" unless it is a single short option
+	name=
+	case "$1" in
+		--?*) name=${1#--} ;;
+		-??*|-[!$as_short_opts]) name=${1#-} ;;
+	esac
+	aslong=
+	test -z "$name" || as_long "${name%%=*}"
+	if test -n "$aslong" || test "${1#--}" != "$1"; then
+		case "$aslong:$name" in
+			defsym:*=*|emulation:*=*|itbl:*=*)
+				asargs+=("$1")
+				;;
+			defsym:*|emulation:*|itbl:*)
+				test $# -gt 1 || { echo "amix as wrapper: $1 needs an argument" >&2; exit 1; }
+				asargs+=("$1" "$2")
+				shift
+				;;
+			*)
+				asargs+=("$1")
+				;;
+		esac
+		shift
+		continue
+	fi
+	# short options, possibly several in one word: the first one that takes
+	# a value ends the word, its value being the rest or the next word
+	flags=${1#-}
+	pre=
+	opt=
+	while test -n "$flags"; do
+		c=${flags:0:1}
+		flags=${flags:1}
+		case "$c" in
+			[IoAmQ]) opt=$c; break ;;
+			a) pre=$pre$c$flags; flags=; break ;;
+			*) pre=$pre$c ;;
+		esac
+	done
+	if test -z "$opt"; then
+		asargs+=("$1")
+		shift
+		continue
+	fi
+	test -z "$pre" || asargs+=("-$pre")
+	if test -z "$flags"; then
+		test $# -gt 1 || { echo "amix as wrapper: -$opt needs an argument" >&2; exit 1; }
+		val=$2
+		shift
+	else
+		val=$flags
+	fi
+	case "$opt" in
+		o) out=$val ;;
+		m) as_arch "-m$val" ;;
+		Q) ;;
+		*) asargs+=("-$opt" "$val") ;;
 	esac
 	shift
 done

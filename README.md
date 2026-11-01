@@ -299,7 +299,10 @@ all get them. `-S` writes the repaired assembly, which assembles as it is, with
 (`| amix fix_asm`) in it so they are not applied twice. Compiler output is
 recognised by the `.ident "GCC: ..."` line cc1 ends every file with (or the
 marker); hand-written assembly, `.s` or `.S`, is assembled exactly as written.
-`make test-paths` gates all of this.
+`make test-paths` gates all of this. The assembler wrapper reads its options
+the way GNU as 2.8.1 does, so `-Wa,` options that take a value keep it:
+`-Wa,--defsym,SYM=1` and `-Wa,-I,dir` work as `--defsym=SYM=1` and `-Idir`
+do (`make test-asopts`).
 
 Run the compiler as `m68k-cbm-sysv4-gcc`. The real driver needs the wrapper's
 environment (the sysroot include path first, `GCC_EXEC_PREFIX`), and a
